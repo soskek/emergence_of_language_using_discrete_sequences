@@ -22,10 +22,10 @@ class Speaker(chainer.Chain):
             l1_next=L.Linear(n_middle * 2, n_units),
             l2_first=L.Linear(n_units, n_units),
             l2_next=L.Linear(n_units, n_units),
-            bn1_first=L.BatchNormalization(n_units),
-            bn1_next=L.BatchNormalization(n_units),
-            bn2_first=L.BatchNormalization(n_units),
-            bn2_next=L.BatchNormalization(n_units),
+            bn1_first=L.BatchNormalization(n_units, use_cudnn=False),
+            bn1_next=L.BatchNormalization(n_units, use_cudnn=False),
+            bn2_first=L.BatchNormalization(n_units, use_cudnn=False),
+            bn2_next=L.BatchNormalization(n_units, use_cudnn=False),
         )
         self.act = F.tanh
 
@@ -91,13 +91,13 @@ class Language(chainer.Chain):
     def __init__(self, n_units, n_vocab):
         super(Language, self).__init__(
             definition=L.EmbedID(n_vocab, n_units),
-            expression=L.Linear(n_units, n_vocab),
+            expression=L.Linear(n_units, n_vocab, nobias=True),
             interpreter=L.StatefulGRU(n_units, n_units),
             decoder=L.StatefulGRU(n_units, n_units),
-            bn_first_interpreter=L.BatchNormalization(n_units),
-            bn_next_interpreter=L.BatchNormalization(n_units),
-            bn_first_expression=L.BatchNormalization(n_vocab),
-            bn_next_expression=L.BatchNormalization(n_vocab),
+            bn_first_interpreter=L.BatchNormalization(n_units, use_cudnn=False),
+            bn_next_interpreter=L.BatchNormalization(n_units, use_cudnn=False),
+            bn_first_expression=L.BatchNormalization(n_vocab, use_cudnn=False),
+            bn_next_expression=L.BatchNormalization(n_vocab, use_cudnn=False),
         )
         self.n_vocab = n_vocab
         self.n_units = n_units
@@ -179,8 +179,8 @@ class Listener(chainer.Chain):
             l1_meaning=L.Linear(n_units, n_middle),
             l1_addnext=L.Linear(n_middle, n_middle),
             l2=L.Linear(n_middle, n_middle),
-            bn2_first=L.BatchNormalization(n_middle),
-            bn2_next=L.BatchNormalization(n_middle),
+            bn2_first=L.BatchNormalization(n_middle, use_cudnn=False),
+            bn2_next=L.BatchNormalization(n_middle, use_cudnn=False),
             l3=L.Linear(n_middle, n_in),
         )
         self.act = F.relu
@@ -253,10 +253,9 @@ class World(chainer.Chain):
             canvas = F.clip(canvas, 0., 1.) * 0.9 + canvas * 0.1
 
             if generate:
-                sentence_history.append(
-                    [sampled_word_idx.data for sampled_word_idx in sampled_word_idx_seq])
                 canvas_history.append(F.clip(canvas, 0., 1.).data)
 
+            sentence_history.append(sampled_word_idx_seq)
             log_prob_history.append(log_probability)
 
             # Calculate comunication loss
@@ -274,17 +273,6 @@ class World(chainer.Chain):
 
         reward = (1.-raw_loss_list[-1]).data
 
-        """
-        for i in range(n_turn):
-            lp = log_prob_history[i]
-            if self.baseline_reward[i] is None:
-                obj = F.sum(log_probability / n_word * (reward - 0.) * decay ** (n_turn - i - 1)) / reward.size
-            else:
-                obj = F.sum(log_probability / n_word * \
-                            (reward - self.baseline_reward[0]) * decay ** (n_turn - i - 1)) / reward.size
-            accum_reward_obj += obj
-            reporter.report({'nr{}'.format(i): obj}, self)
-        """
         i = 0
         if self.baseline_reward[i] is None:
             obj = F.sum(sum(log_prob_history) / n_word * (reward - 0.)) / reward.size
@@ -319,9 +307,19 @@ class World(chainer.Chain):
         reporter.report({'ortho': orthogonal_loss}, self)
         accum_loss += 0.001 * orthogonal_loss
 
+        #"""
+        def word_l2(idx):
+            definition_l2 = self.language.definition(idx) ** 2
+            expression_l2 = F.embed_id(idx, self.language.expression.W) ** 2
+            return definition_l2 + expression_l2
+        L2norm_used_embed = F.sum(sum([sum([word_l2(i) for i in s])
+                                       for s in sentence_history]))
+        accum_loss += 0.0001 * L2norm_used_embed / batchsize
+        #"""
+
         reporter.report({'total': accum_loss}, self)
 
         if generate:
-            return sentence_history, [lp.data for lp in log_prob_history], canvas_history
+            return [[i.data for i in s] for s in sentence_history], [lp.data for lp in log_prob_history], canvas_history
         else:
             return accum_loss
