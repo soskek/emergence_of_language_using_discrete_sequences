@@ -64,26 +64,30 @@ class Sensor(chainer.Chain):
         super(Sensor, self).__init__(
             l1=L.Linear(n_in, n_units),
             l2=L.Linear(n_units, n_units),
+            l3=L.Linear(n_units, n_units),
 
             rec_l1=L.Linear(n_units, n_units),
-            rec_l2=L.Linear(n_units, n_in),
+            rec_l2=L.Linear(n_units, n_units),
+            rec_l3=L.Linear(n_units, n_in),
         )
         self.act = F.relu
 
     def __call__(self, x, true=True, train=True, with_recon=False):
         h1 = self.act(self.l1(x))
         h2 = self.act(self.l2(h1))
+        h3 = self.act(self.l3(h2))
 
         if with_recon:
-            return h2, self.reconstruct(x, h2, true=true, train=train)
+            return h3, self.reconstruct(x, h3, true=true, train=train)
         else:
-            return h2
+            return h3
 
 
     def reconstruct(self, t, h, true=True, train=True):
         h1 = self.act(self.rec_l1(h))
         h2 = self.act(self.rec_l2(h1))
-        return F.mean_squared_error(t, h2)
+        h3 = self.act(self.rec_l3(h2))
+        return F.mean_squared_error(t, h3)
 
 
 class Language(chainer.Chain):
@@ -176,12 +180,13 @@ class Listener(chainer.Chain):
         super(Listener, self).__init__(
             sensor=Sensor(n_in, n_middle),
 
-            l1_meaning=L.Linear(n_units, n_middle),
-            l1_addnext=L.Linear(n_middle, n_middle),
-            l2=L.Linear(n_middle, n_middle),
+            l1_meaning=L.Linear(n_units, n_middle + n_units),
+            l1_addnext=L.Linear(n_middle, n_middle + n_units),
+            l2=L.Linear(n_middle + n_units, n_middle),
             bn2_first=L.BatchNormalization(n_middle, use_cudnn=False),
             bn2_next=L.BatchNormalization(n_middle, use_cudnn=False),
-            l3=L.Linear(n_middle, n_in),
+            l3=L.Linear(n_middle, n_middle),
+            l4=L.Linear(n_middle, n_in),
         )
         self.act = F.relu
 
@@ -190,7 +195,8 @@ class Listener(chainer.Chain):
         rec_loss = 0.
         if turn == 0:
             h1 = self.act(self.l1_meaning(message_meaning))
-            plus_draw = F.tanh(self.l3(self.act(self.bn2_first(self.l2(h1), test=not train))))
+            plus_draw = F.tanh(self.l4(self.act(self.l3(self.act(
+                self.bn2_first(self.l2(h1), test=not train))))))
         else:
             h1 = self.l1_meaning(message_meaning)
             if with_recon:
@@ -198,11 +204,12 @@ class Listener(chainer.Chain):
             else:
                 hidden_canvas = self.sensor(canvas, true=False, train=train, with_recon=False)
             h1 = self.act(h1 + self.l1_addnext(hidden_canvas))
-            plus_draw = F.tanh(self.l3(self.act(self.bn2_next(self.l2(h1), test=not train))))
+            plus_draw = F.tanh(self.l4(self.act(self.l3(self.act(
+                self.bn2_next(self.l2(h1), test=not train))))))
         if with_recon:
-            return plus_draw ** 3 * 1.1, rec_loss
+            return plus_draw ** 3, rec_loss
         else:
-            return plus_draw ** 3 * 1.1
+            return plus_draw ** 3
 
 
 class World(chainer.Chain):
@@ -222,8 +229,11 @@ class World(chainer.Chain):
     def __call__(self, image, generate=False):
         n_turn, n_word = self.n_turn, self.n_word
         accum_loss = 0.
+
+        sub_accum_loss = 0.
         accum_reward_obj = 0.
         accum_rec_loss = 0.
+
         batchsize = image.data.shape[0]
         sentence_history = []
         log_prob_history = []
@@ -267,11 +277,22 @@ class World(chainer.Chain):
             reporter.report({'p{}'.format(i): self.xp.exp(log_probability.data.mean())}, self)
 
 
-        decay = 0.8
+        #"""
+        decay = 0.5
+        accum_loss_pre_step = sum(loss_list[j] * decay ** (n_turn - j - 1) for j in range(n_turn-1))
+        sub_accum_loss += accum_loss_pre_step
+        #"""
 
-        accum_loss += sum(loss_list[i] * decay ** (n_turn - i - 1) for i in range(n_turn))
+        accum_loss += loss_list[n_turn - 1]
+
+        """
+        # modification loss
+        margin = 0.1
+        sub_accum_loss += sum(F.relu(margin + loss_list[i] - loss_list[i-1].data) for i in range(1, n_turn))
+        """
 
         reward = (1.-raw_loss_list[-1]).data
+        #reward = (1.-raw_loss_list[-1])
 
         i = 0
         if self.baseline_reward[i] is None:
@@ -279,10 +300,12 @@ class World(chainer.Chain):
         else:
             obj = F.sum(sum(log_prob_history) / n_word * \
                         (reward - self.baseline_reward[i])) / reward.size
+        #reward = reward.data
+
         accum_reward_obj += obj
         reporter.report({'nr{}'.format(i): obj}, self)
 
-        accum_loss -= accum_reward_obj * 0.00001
+        sub_accum_loss -= accum_reward_obj * 0.00001
 
         if self.train:
             if self.baseline_reward[0] is None:
@@ -294,30 +317,35 @@ class World(chainer.Chain):
         reporter.report({'loss': accum_loss}, self)
         reporter.report({'reward': accum_reward_obj}, self)
         reporter.report({'reconst': accum_rec_loss}, self)
-        accum_loss += accum_rec_loss * 0.01
+        sub_accum_loss += accum_rec_loss * 0.01
 
         def orthogonal_regularizer(M):
             MM = F.matmul(M, F.transpose(M))
             iden = self.xp.identity(MM.shape[0])
-            norm_loss = F.sum((iden - MM * iden) ** 2) * 0.01
+            norm_loss = F.sum((iden - MM * iden) ** 2)
             return F.sum((MM - MM * iden) ** 2 ) + norm_loss
 
+        """
         orthogonal_loss = orthogonal_regularizer(self.language.expression.W) + \
-                          orthogonal_regularizer(self.language.definition.W)
+        #                  orthogonal_regularizer(self.language.definition.W)
         reporter.report({'ortho': orthogonal_loss}, self)
-        accum_loss += 0.001 * orthogonal_loss
-
-        #"""
+        sub_accum_loss += 0.001 * orthogonal_loss
+        """
+        
+        """
         def word_l2(idx):
             definition_l2 = self.language.definition(idx) ** 2
             expression_l2 = F.embed_id(idx, self.language.expression.W) ** 2
             return definition_l2 + expression_l2
         L2norm_used_embed = F.sum(sum([sum([word_l2(i) for i in s])
                                        for s in sentence_history]))
-        accum_loss += 0.0001 * L2norm_used_embed / batchsize
-        #"""
+        sub_accum_loss += 0.0001 * L2norm_used_embed / batchsize
+        """
 
         reporter.report({'total': accum_loss}, self)
+
+        accum_loss += sub_accum_loss
+        self.sub_accum_loss = sub_accum_loss.data
 
         if generate:
             return [[i.data for i in s] for s in sentence_history], [lp.data for lp in log_prob_history], canvas_history

@@ -20,7 +20,7 @@ except:
 import json
 
 
-def generate(model, data, train=False, printer=False):
+def generate(model, data, out='./', train=False, printer=False):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -39,12 +39,12 @@ def generate(model, data, train=False, printer=False):
             ai.imshow(xi.reshape(28, 28), cmap='Greys_r')
         fig.savefig(filename)
         
-    save_images(true_image.data, str(train)+'_.png')
-    np.save(str(train)+'_.npz', np.array(true_image.data.tolist()))
+    save_images(true_image.data, out+str(train)+'_.png')
+    #np.save(out+str(train)+'_.npz', np.array(true_image.data.tolist()))
     if printer: print('save _.png')
     for i in range(model.n_turn):
-        save_images(canvas_history[i], str(train)+'{}.png'.format(i))
-        np.save(str(train)+'{}.npz'.format(i), np.array(canvas_history[i].tolist()))
+        save_images(canvas_history[i], out+str(train)+'{}.png'.format(i))
+        #np.save(out+str(train)+'{}.npz'.format(i), np.array(canvas_history[i].tolist()))
         if printer: print('save {}.png'.format(i))
     for i in range(data.shape[0]):
         for log_prob_batch, word_batch_list in zip(log_prob_history, sentence_history):
@@ -55,7 +55,7 @@ def generate(model, data, train=False, printer=False):
                 [float(lpb[i]) for lpb in log_prob_history]
             ]
             for i in range(data.shape[0])]
-    json.dump(save_target, open(str(train)+'seq.json', 'w'))
+    json.dump(save_target, open(out+str(train)+'seq.json', 'w'))
 
 
 def main():
@@ -66,25 +66,46 @@ def main():
                         help='Number of sweeps over the dataset to train')
     parser.add_argument('--gpu', '-g', type=int, default=-1,
                         help='GPU ID (negative value indicates CPU)')
-    parser.add_argument('--out', '-o', default='result',
+    parser.add_argument('--out', '-o', default='./result',
                         help='Directory to output the result')
     parser.add_argument('--resume', '-r', default='',
                         help='Resume the training from snapshot')
-    parser.add_argument('--unit', '-u', type=int, default=1000,
+
+    parser.add_argument('--unit', '-u', type=int, default=128,
                         help='Number of units')
+    parser.add_argument('--image-unit', '-i', type=int, default=256,
+                        help='Number of middel units for image expression')
+
+    parser.add_argument('--word', '-w', type=int, default=2,
+                        help='Number of words in a message')
+    parser.add_argument('--turn', '-t', type=int, default=3,
+                        help='Number of turns')
+    parser.add_argument('--vocab', '-v', type=int, default=32,
+                        help='Number of words in vocab')
+
     args = parser.parse_args()
 
+    args.out = args.out.rstrip('/') + '/'
+
+    import json
+    print(json.dumps(args.__dict__, indent=2))
+
+    """
     print('GPU: {}'.format(args.gpu))
     print('# unit: {}'.format(args.unit))
     print('# Minibatch-size: {}'.format(args.batchsize))
     print('# epoch: {}'.format(args.epoch))
+    """
     print('')
-
 
     #model = World(n_in, n_middle, n_units, n_vocab)
     #model = communicator.World(28 * 28, 128, 64, 32)
-    model = communicator.World(28 * 28, 256, 128, n_vocab=32, n_word=2, n_turn=3)
+    #model = communicator.World(28 * 28, 256, 256, n_vocab=32, n_word=2, n_turn=3)
+    ##model = communicator.World(28 * 28, 256, 128, n_vocab=32, n_word=2, n_turn=3)
     #model = communicator.World(28 * 28, 512, 128, n_vocab=32, n_word=2, n_turn=3)
+
+    model = communicator.World(28 * 28, args.image_unit, args.unit, n_vocab=args.vocab, n_word=args.word, n_turn=args.turn)
+
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()  # Make a specified GPU current
         model.to_gpu()  # Copy the model to the GPU
@@ -100,10 +121,18 @@ def main():
     print('# of train data:', len(train))
     print('# of test data:', len(test))
 
+    import os
+    if not os.path.isdir(args.out):
+        if os.path.exists(args.out):
+            print(args.out, 'exists as a file')
+            exit()
+        else:
+            os.mkdir(args.out)
+
     convert = chainer.dataset.convert.concat_examples
     d = convert(train[:50])
     d = chainer.Variable(model.xp.array(d.tolist(), np.float32), volatile='auto')
-    generate(model, d, train=True)
+    generate(model, d, out=args.out, train=True)
 
     batchsize = args.batchsize
     convert = chainer.dataset.convert.concat_examples
@@ -118,33 +147,34 @@ def main():
                               (i_iter+1)*batchsize]
             batch = [train[idx] for idx in ids]
             batch = chainer.Variable(model.xp.array(convert(batch).tolist(), np.float32), volatile='auto')
-            loss = model(batch)
             model.zerograds()
+            loss = model(batch)
             loss.backward()
             optimizer.update()
-            accum_loss_data += loss.data
+            accum_loss_data += loss.data - model.sub_accum_loss
 
         convert = chainer.dataset.convert.concat_examples
         d = convert(train[:50])
         d = chainer.Variable(model.xp.array(d.tolist(), np.float32), volatile='auto')
-        generate(model, d, train=True, printer=(i_epoch == args.epoch - 1))
+        generate(model, d, out=args.out, train=True, printer=(i_epoch == args.epoch - 1))
         
         convert = chainer.dataset.convert.concat_examples
         d = convert(test[:50])
         d = chainer.Variable(model.xp.array(d.tolist(), np.float32), volatile='auto')
-        generate(model, d, train=False, printer=(i_epoch == args.epoch - 1))
+        generate(model, d, out=args.out, train=False, printer=(i_epoch == args.epoch - 1))
 
 
-        print(i_epoch, 'loss :', accum_loss_data)
+        print(i_epoch, 'loss :', accum_loss_data / n_iters)
 
         model.train = False
         batch = chainer.Variable(model.xp.array(convert(test).tolist(), np.float32), volatile='auto')
         valid_loss_data = model(batch).data
+        valid_loss_data -= model.sub_accum_loss
         print(i_epoch, 'valid:', valid_loss_data)
         model.train = True
 
     import chainer.serializers as S
-    S.save_npz('saved_model.model', model)
+    S.save_npz(args.out + 'saved_model.model', model)
 
 
 if __name__ == '__main__':
