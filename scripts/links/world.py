@@ -63,7 +63,8 @@ class World(chainer.Chain):
         self.calc_reconstruction = False
         self.calc_full_turn = True
         self.calc_modification = False
-        self.calc_orthogonal_loss = False
+        #self.calc_orthogonal_loss = False
+        self.calc_orthogonal_loss = True
         self.calc_word_l2_loss = False
 
         self.baseline = None
@@ -211,10 +212,10 @@ class World(chainer.Chain):
                 return F.sum((MM - MM * iden) ** 2)
 
             orthogonal_loss = orthogonal_regularizer(
-                self.speaker.language.expression.W) + \
+                self.speaker.language.definition.W) + \
                 orthogonal_regularizer(
-                self.listener.language.definition.W)
-            sub_accum_loss += orthogonal_loss * 0.001
+                    self.listener.language.definition.W)
+            sub_accum_loss += orthogonal_loss * 0.01
             reporter.report({'ortho': orthogonal_loss}, self)
 
         # Add l2 norm of language by usage freq
