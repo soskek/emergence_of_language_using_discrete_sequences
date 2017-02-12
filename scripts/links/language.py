@@ -14,29 +14,23 @@ import numpy as np
 
 class NaiveLanguage(chainer.Chain):
 
-    def __init__(self, n_units, n_vocab,
+    def __init__(self, n_units, n_vocab, n_turn,
                  share=False, listener=False, speaker=False):
         if share:
             super(NaiveLanguage, self).__init__(
                 definition=L.EmbedID(n_vocab, n_units),
-                expression=L.Linear(n_units, n_vocab, nobias=True),
                 interpreter=L.StatefulGRU(n_units, n_units),
                 decoder=L.StatefulGRU(n_units, n_units),
-                bn_interpreter=L.BatchNormalization(n_units, use_cudnn=False),
-                bn_expression=L.BatchNormalization(n_vocab, use_cudnn=False),
             )
         elif listener:
             super(NaiveLanguage, self).__init__(
                 definition=L.EmbedID(n_vocab, n_units),
                 interpreter=L.StatefulGRU(n_units, n_units),
-                bn_interpreter=L.BatchNormalization(n_units, use_cudnn=False),
             )
         elif speaker:
             super(NaiveLanguage, self).__init__(
                 definition=L.EmbedID(n_vocab, n_units),
-                expression=L.Linear(n_units, n_vocab, nobias=True),
                 decoder=L.StatefulGRU(n_units, n_units),
-                bn_expression=L.BatchNormalization(n_vocab, use_cudnn=False),
             )
         else:
             print('choose language type. [share, listener, speaker]')
@@ -51,13 +45,15 @@ class NaiveLanguage(chainer.Chain):
         self.bos.data[:] = 0
 
     def decode_word(self, x, train=True):
-        probability = F.softmax(self.expression(x))
+        match_score = F.linear(x, self.definition.W)
+        probability = F.softmax(match_score)
 
         prob_data = probability.data
         if self.xp != np:
             prob_data = self.xp.asnumpy(prob_data)
         batchsize = x.data.shape[0]
 
+        #train = True
         if train:
             sampled_ids = np.zeros((batchsize,), np.int32)
             for i_batch, one_prob_data in enumerate(prob_data):
@@ -85,8 +81,6 @@ class NaiveLanguage(chainer.Chain):
         for message_word in x_seq:
             message_meaning = self.interpreter(
                 self.interpret_word(message_word))
-
-        message_meaning = self.bn_interpreter(message_meaning, test=not train)
 
         self.interpreter.reset_state()
         return message_meaning

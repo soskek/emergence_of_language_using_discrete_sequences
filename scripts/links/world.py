@@ -21,25 +21,28 @@ import reconstructor as Recon
 
 class World(chainer.Chain):
 
-    def __init__(self, n_in, n_middle, n_units, n_vocab, n_word, n_turn):
-        sensor_for_listener = Sensor.NaiveFCSensor(n_in, n_middle)
-        sensor_for_speaker = Sensor.NaiveFCSensor(n_in, n_middle)
+    def __init__(self, n_in, n_middle, n_units, n_vocab, n_word, n_turn,
+                 drop_ratio=0.):
+        sensor_for_listener = Sensor.NaiveFCSensor(n_in, n_middle, n_turn)
+        sensor_for_speaker = Sensor.NaiveFCSensor(n_in, n_middle, n_turn + 1)
 
+        reconstructor_for_listener = Recon.NaiveFCReconstructor(n_in, n_middle)
         reconstructor_for_speaker = Recon.NaiveFCReconstructor(n_in, n_middle)
 
         painter = Painter.NaiveFCPainter(n_in, n_middle)
 
-        language_for_listener = Language.NaiveLanguage(n_units, n_vocab,
+        language_for_listener = Language.NaiveLanguage(n_units, n_vocab, n_turn,
                                                        listener=True)
-        language_for_speaker = Language.NaiveLanguage(n_units, n_vocab,
+        language_for_speaker = Language.NaiveLanguage(n_units, n_vocab, n_turn,
                                                       speaker=True)
 
-        listener = Listener.NaiveListener(n_in, n_middle, n_units,
+        listener = Listener.NaiveListener(n_in, n_middle, n_units, n_turn,
                                           sensor_for_listener,
                                           language_for_listener,
-                                          painter)
+                                          painter,
+                                          reconstructor_for_listener)
 
-        speaker = Speaker.NaiveSpeaker(n_in, n_middle, n_units,
+        speaker = Speaker.NaiveSpeaker(n_in, n_middle, n_units, n_turn,
                                        sensor_for_speaker,
                                        language_for_speaker,
                                        reconstructor_for_speaker)
@@ -51,18 +54,23 @@ class World(chainer.Chain):
 
         self.n_turn = n_turn
         self.n_word = n_word
+        self.drop_ratio = drop_ratio
 
         self.train = True
 
         self.calc_reconstruction = True
         self.calc_full_turn = True
-        self.calc_modification = True
+        self.calc_modification = False
         self.calc_orthogonal_loss = False
         self.calc_word_l2_loss = False
+
+        self.baseline = None
 
     def __call__(self, image, generate=False):
         n_turn, n_word = self.n_turn, self.n_word
         train = self.train
+        #train = True
+        # traing no atai izon de okasiku naru...
 
         accum_loss = 0.
         sub_accum_loss = 0.
@@ -81,33 +89,51 @@ class World(chainer.Chain):
         loss_list = []
         raw_loss_list = []
 
-        for i in range(n_turn):
+        # [Speaker]
+        # Percieve
+        hidden_image = self.speaker.perceive(image, n_turn, train=train)
+        # bn_list[n_turn] is used for real image
+
+        # Self-reconstruction
+        if self.calc_reconstruction:
+            loss_recon = self.speaker.reconstructor(image, hidden_image)
+            accum_loss_reconstruction += loss_recon
+
+        for turn in range(n_turn):
             # [Speaker]
             # Express the image x compared to canvas
             # Perceive
-            hidden_image = self.speaker.perceive(image)
-            hidden_canvas = self.speaker.perceive(canvas)
+            hidden_canvas = self.speaker.perceive(canvas, turn, train=train)
+            # Self-reconstruction
+            if self.calc_reconstruction:
+                loss_recon = self.speaker.reconstructor(canvas, hidden_canvas)
+                accum_loss_reconstruction += loss_recon
+
             # Express
             thought = self.speaker.think(
-                hidden_image, hidden_canvas, train=train)
+                hidden_image, hidden_canvas, turn, train=train)
+
             sampled_word_idx_seq, log_probability = self.speaker.speak(
                 thought, n_word=n_word, train=train)
-
-            # Self-reconstruction
-            loss_recon = self.speaker.reconstructor(image, hidden_image) + \
-                self.speaker.reconstructor(canvas, hidden_canvas)
-            accum_loss_reconstruction += loss_recon
 
             # [Listener]
             # Interpret the expression & Paint it into canvas
             # Perceive (only canvas)
-            hidden_canvas = self.listener.perceive(canvas, train=train)
+            hidden_canvas = self.listener.perceive(canvas, turn, train=train)
+            # Self-reconstruction
+            if self.calc_reconstruction:
+                loss_recon = self.listener.reconstructor(canvas, hidden_canvas)
+                accum_loss_reconstruction += loss_recon
 
             # Interpret the expression with current situation (canvas)
             message_meaning = self.listener.listen(
-                sampled_word_idx_seq, train=train)
+                sampled_word_idx_seq, turn, train=train)
+
+            # ZURU
+            # message_meaning += thought
+
             concept = self.listener.think(
-                hidden_canvas, message_meaning, train=train)
+                hidden_canvas, message_meaning, turn, train=train)
             plus_draw = self.listener.painter(concept, train=train)
 
             # Paint
@@ -127,22 +153,26 @@ class World(chainer.Chain):
             loss = F.sum(raw_loss) / image.data.size
             loss_list.append(loss)
 
-            reporter.report({'l{}'.format(i): loss}, self)
-            reporter.report({'p{}'.format(i): self.xp.exp(
+            reporter.report({'l{}'.format(turn): loss}, self)
+            reporter.report({'p{}'.format(turn): self.xp.exp(
                 log_probability.data.mean())}, self)
 
         # Add the last loss
-        accum_loss += loss_list[n_turn - 1]
+        accum_loss += loss_list[-1]
         reporter.report({'loss': accum_loss}, self)
 
         # Add (minus) reinforce
         reward = (1. - raw_loss_list[-1]).data
-        baseline = self.xp.mean(reward)
-        reinforce = F.sum(sum(log_prob_history) *
+        baseline = self.baseline if not self.baseline is None \
+            else self.xp.mean(reward)
+        reinforce = F.sum(sum(log_prob_history) / n_turn *
                           (reward - baseline)) / reward.size
+        self.baseline = self.baseline * 0.95 + self.xp.mean(reward) * 0.05 \
+            if not self.baseline is None \
+            else self.xp.mean(reward)
         accum_reinforce = reinforce
         reporter.report({'reward': accum_reinforce}, self)
-        sub_accum_loss -= accum_reinforce * 0.001
+        sub_accum_loss -= accum_reinforce * 0.00001
 
         # Add loss of self-reconstruction
         if self.calc_reconstruction:

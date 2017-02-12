@@ -89,6 +89,9 @@ def main():
     parser.add_argument('--vocab', '-v', type=int, default=32,
                         help='Number of words in vocab')
 
+    parser.add_argument('--drop-ratio', '--dropout', type=float, default=0.,
+                        help='dropout ratio')
+
     args = parser.parse_args()
 
     args.out = args.out.rstrip('/') + '/'
@@ -100,7 +103,8 @@ def main():
 
     model = world.World(
         28 * 28, args.image_unit, args.unit,
-        n_vocab=args.vocab, n_word=args.word, n_turn=args.turn)
+        n_vocab=args.vocab, n_word=args.word, n_turn=args.turn,
+        drop_ratio=args.drop_ratio)
 
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()  # Make a specified GPU current
@@ -124,12 +128,6 @@ def main():
             exit()
         else:
             os.mkdir(args.out)
-
-    convert = chainer.dataset.convert.concat_examples
-    d = convert(train[:50])
-    d = chainer.Variable(
-        model.xp.array(d.tolist(), np.float32), volatile='auto')
-    generate(model, d, out=args.out, train=True)
 
     batchsize = args.batchsize
     convert = chainer.dataset.convert.concat_examples
@@ -159,7 +157,6 @@ def main():
         generate(model, d, out=args.out, train=True,
                  printer=(i_epoch == args.epoch - 1))
 
-        convert = chainer.dataset.convert.concat_examples
         d = convert(test[:50])
         d = chainer.Variable(
             model.xp.array(d.tolist(), np.float32), volatile='auto')
@@ -169,11 +166,23 @@ def main():
         print(i_epoch, 'loss :', accum_loss_data / n_iters)
 
         model.train = False
-        batch = chainer.Variable(
-            model.xp.array(convert(test).tolist(), np.float32), volatile='auto')
-        valid_loss_data = model(batch).data
-        valid_loss_data -= model.sub_accum_loss
-        print(i_epoch, 'valid:', valid_loss_data)
+        accum_valid_loss_data = 0.
+
+        for i_iter in range(len(test) // batchsize + 1):
+            ids = [i_iter * batchsize + idx for idx in range(batchsize)]
+            ids = [idx for idx in ids if idx < len(test)]
+            batch = [test[idx]
+                     for idx in ids if idx < len(test)]
+            if not batch:
+                continue
+            batch = chainer.Variable(
+                model.xp.array(convert(batch).tolist(), np.float32),
+                volatile='auto')
+            valid_loss_data = model(batch).data
+            valid_loss_data -= model.sub_accum_loss
+            accum_valid_loss_data += valid_loss_data * len(ids)
+
+        print(i_epoch, 'valid:', accum_valid_loss_data / len(test))
         model.train = True
 
     import chainer.serializers as S

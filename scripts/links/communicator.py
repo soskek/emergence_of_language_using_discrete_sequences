@@ -31,22 +31,27 @@ class Speaker(chainer.Chain):
 
     def __call__(self, x, z, language, turn, n_word=3, train=True, with_recon=False):
         if with_recon:
-            true_image, rec_loss = self.sensor(x, true=True, train=train, with_recon=True)
+            true_image, rec_loss = self.sensor(
+                x, true=True, train=train, with_recon=True)
         else:
             true_image = self.sensor(x, true=True, train=train)
 
         if turn == 0:
-            h1 = self.act(self.bn1_first(self.l1_first(true_image), test=not train))
-            thought = self.act(self.bn2_first(self.l2_first(h1), test=not train))
+            h1 = self.act(self.bn1_first(
+                self.l1_first(true_image), test=not train))
+            thought = self.act(self.bn2_first(
+                self.l2_first(h1), test=not train))
             rec_loss_now, rec_loss = 0., 0.
         else:
             if with_recon:
-                now_image, rec_loss_now = self.sensor(z, true=False, train=train, with_recon=True)
+                now_image, rec_loss_now = self.sensor(
+                    z, true=False, train=train, with_recon=True)
             else:
                 now_image = self.sensor(z, true=False, train=train)
                 rec_loss_now = 0.
             comparison = F.concat([true_image, now_image], axis=1)
-            h1 = self.act(self.bn1_next(self.l1_next(comparison), test=not train))
+            h1 = self.act(self.bn1_next(
+                self.l1_next(comparison), test=not train))
             thought = self.act(self.bn2_next(self.l2_next(h1), test=not train))
 
         sampled_word_idx_seq, total_log_probability = language.decode_thought(
@@ -82,7 +87,6 @@ class Sensor(chainer.Chain):
         else:
             return h3
 
-
     def reconstruct(self, t, h, true=True, train=True):
         h1 = self.act(self.rec_l1(h))
         h2 = self.act(self.rec_l2(h1))
@@ -98,7 +102,8 @@ class Language(chainer.Chain):
             expression=L.Linear(n_units, n_vocab, nobias=True),
             interpreter=L.StatefulGRU(n_units, n_units),
             decoder=L.StatefulGRU(n_units, n_units),
-            bn_first_interpreter=L.BatchNormalization(n_units, use_cudnn=False),
+            bn_first_interpreter=L.BatchNormalization(
+                n_units, use_cudnn=False),
             bn_next_interpreter=L.BatchNormalization(n_units, use_cudnn=False),
             bn_first_expression=L.BatchNormalization(n_vocab, use_cudnn=False),
             bn_next_expression=L.BatchNormalization(n_vocab, use_cudnn=False),
@@ -122,11 +127,13 @@ class Language(chainer.Chain):
         if train:
             sampled_ids = np.zeros((batchsize,), np.int32)
             for i_batch, one_prob_data in enumerate(prob_data):
-                sampled_ids[i_batch] = np.random.choice(self.n_vocab, p=one_prob_data)
+                sampled_ids[i_batch] = np.random.choice(
+                    self.n_vocab, p=one_prob_data)
         else:
             sampled_ids = np.zeros((batchsize,), np.int32)
             for i_batch, one_prob_data in enumerate(prob_data):
-                sampled_ids[i_batch] = np.argmax(one_prob_data).astype(np.int32)
+                sampled_ids[i_batch] = np.argmax(
+                    one_prob_data).astype(np.int32)
 
         if self.xp != np:
             sampled_ids = self.xp.array(sampled_ids)
@@ -142,12 +149,15 @@ class Language(chainer.Chain):
         self.interpreter.reset_state()
 
         for message_word in x_seq:
-            message_meaning = self.interpreter(self.interpret_word(message_word))
+            message_meaning = self.interpreter(
+                self.interpret_word(message_word))
 
         if turn == 0:
-            message_meaning = self.bn_first_interpreter(message_meaning, test=not train)
+            message_meaning = self.bn_first_interpreter(
+                message_meaning, test=not train)
         else:
-            message_meaning = self.bn_next_interpreter(message_meaning, test=not train)
+            message_meaning = self.bn_next_interpreter(
+                message_meaning, test=not train)
 
         self.interpreter.reset_state()
         return message_meaning
@@ -156,17 +166,20 @@ class Language(chainer.Chain):
         sampled_word_idx_seq = []
         total_log_probability = 0.
         if n_word == 1:
-            sampled_word_idx, probability = self.decode_word(thought, turn, train=train)
+            sampled_word_idx, probability = self.decode_word(
+                thought, turn, train=train)
             sampled_word_idx_seq.append(sampled_word_idx)
             total_log_probability += F.log(probability)
         else:
             self.decoder.reset_state()
             self.decoder.h = thought
-            bos = F.broadcast_to(self.bos, (thought.data.shape[0], len(self.bos.data)))
+            bos = F.broadcast_to(
+                self.bos, (thought.data.shape[0], len(self.bos.data)))
             x_input = bos
             for i in range(n_word):
                 h = self.decoder(x_input)
-                sampled_word_idx, probability = self.decode_word(h, turn, train=train)
+                sampled_word_idx, probability = self.decode_word(
+                    h, turn, train=train)
                 sampled_word_idx_seq.append(sampled_word_idx)
                 total_log_probability += F.log(probability)
                 x_input = self.interpret_word(sampled_word_idx)
@@ -191,7 +204,8 @@ class Listener(chainer.Chain):
         self.act = F.relu
 
     def __call__(self, canvas, message_sentence, language, turn, train=True, with_recon=False):
-        message_meaning = language.interpret_sentence(message_sentence, turn, train=train)
+        message_meaning = language.interpret_sentence(
+            message_sentence, turn, train=train)
         rec_loss = 0.
         if turn == 0:
             h1 = self.act(self.l1_meaning(message_meaning))
@@ -200,9 +214,11 @@ class Listener(chainer.Chain):
         else:
             h1 = self.l1_meaning(message_meaning)
             if with_recon:
-                hidden_canvas, rec_loss = self.sensor(canvas, true=False, train=train, with_recon=True)
+                hidden_canvas, rec_loss = self.sensor(
+                    canvas, true=False, train=train, with_recon=True)
             else:
-                hidden_canvas = self.sensor(canvas, true=False, train=train, with_recon=False)
+                hidden_canvas = self.sensor(
+                    canvas, true=False, train=train, with_recon=False)
             h1 = self.act(h1 + self.l1_addnext(hidden_canvas))
             plus_draw = F.tanh(self.l4(self.act(self.l3(self.act(
                 self.bn2_next(self.l2(h1), test=not train))))))
@@ -218,7 +234,7 @@ class World(chainer.Chain):
         super(World, self).__init__(
             language=Language(n_units, n_vocab),
             listener=Listener(n_in, n_middle, n_units),
-            speaker =Speaker(n_in, n_middle, n_units),
+            speaker=Speaker(n_in, n_middle, n_units),
         )
         self.n_turn = n_turn
         self.n_word = n_word
@@ -241,7 +257,8 @@ class World(chainer.Chain):
 
         # Initialize canvas of Listener
         #canvas = chainer.Variable(self.xp.zeros(image.data.shape, np.float32), volatile='auto')
-        canvas = chainer.Variable(self.xp.ones(image.data.shape, np.float32), volatile='auto')
+        canvas = chainer.Variable(self.xp.ones(
+            image.data.shape, np.float32), volatile='auto')
 
         loss_list = []
         raw_loss_list = []
@@ -258,7 +275,7 @@ class World(chainer.Chain):
             plus_draw, rec_loss = self.listener(
                 canvas, sampled_word_idx_seq, self.language, turn=i, with_recon=True, train=self.train)
             accum_rec_loss += rec_loss
-            
+
             canvas = canvas + plus_draw
             canvas = F.clip(canvas, 0., 1.) * 0.9 + canvas * 0.1
 
@@ -274,12 +291,13 @@ class World(chainer.Chain):
             loss = F.sum(raw_loss) / image.data.size
             reporter.report({'l{}'.format(i): loss}, self)
             loss_list.append(loss)
-            reporter.report({'p{}'.format(i): self.xp.exp(log_probability.data.mean())}, self)
-
+            reporter.report({'p{}'.format(i): self.xp.exp(
+                log_probability.data.mean())}, self)
 
         #"""
         decay = 0.5
-        accum_loss_pre_step = sum(loss_list[j] * decay ** (n_turn - j - 1) for j in range(n_turn-1))
+        accum_loss_pre_step = sum(
+            loss_list[j] * decay ** (n_turn - j - 1) for j in range(n_turn - 1))
         sub_accum_loss += accum_loss_pre_step
         #"""
 
@@ -291,14 +309,15 @@ class World(chainer.Chain):
         sub_accum_loss += sum(F.relu(margin + loss_list[i] - loss_list[i-1].data) for i in range(1, n_turn))
         """
 
-        reward = (1.-raw_loss_list[-1]).data
+        reward = (1. - raw_loss_list[-1]).data
         #reward = (1.-raw_loss_list[-1])
 
         i = 0
         if self.baseline_reward[i] is None:
-            obj = F.sum(sum(log_prob_history) / n_word * (reward - 0.)) / reward.size
+            obj = F.sum(sum(log_prob_history) / n_word *
+                        (reward - 0.)) / reward.size
         else:
-            obj = F.sum(sum(log_prob_history) / n_word * \
+            obj = F.sum(sum(log_prob_history) / n_word *
                         (reward - self.baseline_reward[i])) / reward.size
         #reward = reward.data
 
@@ -312,7 +331,7 @@ class World(chainer.Chain):
                 self.baseline_reward[0] = (self.xp.sum(reward) / reward.size)
             else:
                 self.baseline_reward[0] = 0.95 * self.baseline_reward[0] \
-                                          + 0.05 * (self.xp.sum(reward) / reward.size)
+                    + 0.05 * (self.xp.sum(reward) / reward.size)
 
         reporter.report({'loss': accum_loss}, self)
         reporter.report({'reward': accum_reward_obj}, self)
@@ -323,7 +342,7 @@ class World(chainer.Chain):
             MM = F.matmul(M, F.transpose(M))
             iden = self.xp.identity(MM.shape[0])
             norm_loss = F.sum((iden - MM * iden) ** 2)
-            return F.sum((MM - MM * iden) ** 2 ) + norm_loss
+            return F.sum((MM - MM * iden) ** 2) + norm_loss
 
         """
         orthogonal_loss = orthogonal_regularizer(self.language.expression.W) + \
@@ -331,7 +350,7 @@ class World(chainer.Chain):
         reporter.report({'ortho': orthogonal_loss}, self)
         sub_accum_loss += 0.001 * orthogonal_loss
         """
-        
+
         """
         def word_l2(idx):
             definition_l2 = self.language.definition(idx) ** 2
