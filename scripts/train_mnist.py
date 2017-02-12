@@ -26,7 +26,7 @@ def generate(model, data, out='./', train=False, printer=False):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     prev_train = model.train
-    model.train = train
+    model.train = False
     sentence_history, log_prob_history, canvas_history = model(
         data, generate=True)
     canvas_history = [c * 255 for c in canvas_history]
@@ -82,6 +82,10 @@ def main():
     parser.add_argument('--image-unit', '-i', type=int, default=128,
                         help='Number of middel units for image expression')
 
+    parser.add_argument('--co-importance', '-importance', '-imp',
+                        type=float, default=0.,
+                        help='Coef. of importance loss')
+
     parser.add_argument('--word', '-w', type=int, default=3,
                         help='Number of words in a message')
     parser.add_argument('--turn', '-t', type=int, default=3,
@@ -104,7 +108,7 @@ def main():
     model = world.World(
         28 * 28, args.image_unit, args.unit,
         n_vocab=args.vocab, n_word=args.word, n_turn=args.turn,
-        drop_ratio=args.drop_ratio)
+        drop_ratio=args.drop_ratio, co_importance=args.co_importance)
 
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()  # Make a specified GPU current
@@ -154,7 +158,7 @@ def main():
         d = convert(train[:50])
         d = chainer.Variable(
             model.xp.array(d.tolist(), np.float32), volatile='auto')
-        generate(model, d, out=args.out, train=False,
+        generate(model, d, out=args.out, train=True,
                  printer=(i_epoch == args.epoch - 1))
 
         d = convert(test[:50])

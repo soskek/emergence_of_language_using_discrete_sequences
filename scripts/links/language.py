@@ -70,7 +70,7 @@ class NaiveLanguage(chainer.Chain):
         sampled_ids = chainer.Variable(sampled_ids, volatile='auto')
         sampled_probability = F.select_item(probability, sampled_ids)
 
-        return sampled_ids, sampled_probability
+        return sampled_ids, sampled_probability, probability
 
     def interpret_word(self, x):
         return self.definition(x)
@@ -88,11 +88,13 @@ class NaiveLanguage(chainer.Chain):
     def decode_thought(self, thought, n_word, train=True):
         sampled_word_idx_seq = []
         total_log_probability = 0.
+        p_dists = []
         if n_word == 1:
-            sampled_word_idx, probability = self.decode_word(
+            sampled_word_idx, probability, p_dist = self.decode_word(
                 thought, train=train)
             sampled_word_idx_seq.append(sampled_word_idx)
             total_log_probability += F.log(probability)
+            p_dists.append(p_dist)
         else:
             self.decoder.reset_state()
             self.decoder.h = thought
@@ -100,10 +102,11 @@ class NaiveLanguage(chainer.Chain):
                 self.bos, (thought.data.shape[0], len(self.bos.data)))
             for i in range(n_word):
                 h = self.decoder(x_input)
-                sampled_word_idx, probability = self.decode_word(
+                sampled_word_idx, probability, p_dist = self.decode_word(
                     h, train=train)
                 sampled_word_idx_seq.append(sampled_word_idx)
                 total_log_probability += F.log(probability)
+                p_dists.append(p_dist)
                 x_input = self.interpret_word(sampled_word_idx)
             self.decoder.reset_state()
-        return sampled_word_idx_seq, total_log_probability
+        return sampled_word_idx_seq, total_log_probability, p_dists

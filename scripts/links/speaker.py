@@ -66,6 +66,6 @@ class NaiveSpeaker(chainer.Chain):
         return self.think(hidden_image, hidden_canvas, turn, train=train)
 
     def speak(self, thought, n_word=3, train=True):
-        sampled_word_idx_seq, total_log_probability = \
+        sampled_word_idx_seq, total_log_probability, p_dists = \
             self.language.decode_thought(thought, n_word, train=train)
-        return sampled_word_idx_seq, total_log_probability
+        return sampled_word_idx_seq, total_log_probability, p_dists

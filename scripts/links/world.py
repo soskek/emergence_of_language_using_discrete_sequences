@@ -22,7 +22,7 @@ import reconstructor as Recon
 class World(chainer.Chain):
 
     def __init__(self, n_in, n_middle, n_units, n_vocab, n_word, n_turn,
-                 drop_ratio=0.):
+                 drop_ratio=0., co_importance=0.):
         sensor_for_listener = Sensor.NaiveFCSensor(
             n_in, n_middle, n_turn, drop_ratio)
         sensor_for_speaker = Sensor.NaiveFCSensor(
@@ -63,8 +63,9 @@ class World(chainer.Chain):
         self.calc_reconstruction = False
         self.calc_full_turn = True
         self.calc_modification = False
-        #self.calc_orthogonal_loss = False
+        # self.calc_orthogonal_loss = False
         self.calc_orthogonal_loss = True
+        self.calc_importance_loss = co_importance
         self.calc_word_l2_loss = False
 
         self.baseline = None
@@ -72,7 +73,7 @@ class World(chainer.Chain):
     def __call__(self, image, generate=False):
         n_turn, n_word = self.n_turn, self.n_word
         train = self.train
-        #train = True
+        # train = True
         # traing no atai izon de okasiku naru...
 
         accum_loss = 0.
@@ -84,6 +85,7 @@ class World(chainer.Chain):
         sentence_history = []
         log_prob_history = []
         canvas_history = []
+        p_dists_history = []
 
         # Initialize canvas of Listener
         canvas = chainer.Variable(
@@ -116,7 +118,7 @@ class World(chainer.Chain):
             thought = self.speaker.think(
                 hidden_image, hidden_canvas, turn, train=train)
 
-            sampled_word_idx_seq, log_probability = self.speaker.speak(
+            sampled_word_idx_seq, log_probability, p_dists = self.speaker.speak(
                 thought, n_word=n_word, train=train)
 
             # [Listener]
@@ -133,7 +135,7 @@ class World(chainer.Chain):
                 sampled_word_idx_seq, turn, train=train)
 
             # ZURU
-            #message_meaning += thought
+            # message_meaning += thought
 
             concept = self.listener.think(
                 hidden_canvas, message_meaning, turn, train=train)
@@ -151,6 +153,7 @@ class World(chainer.Chain):
             canvas_history.append(canvas)
             sentence_history.append(sampled_word_idx_seq)
             log_prob_history.append(log_probability)
+            p_dists_history.append(p_dists)
 
             # Calculate communication loss
             raw_loss = F.sum((canvas - image) ** 2, axis=1)
@@ -217,6 +220,22 @@ class World(chainer.Chain):
                     self.listener.language.definition.W)
             sub_accum_loss += orthogonal_loss * 0.01
             reporter.report({'ortho': orthogonal_loss}, self)
+
+        # Add balancing vocabulary
+        if self.calc_importance_loss:
+            def importance_regularizer(p):
+                importance = F.sum(p, axis=0)
+                mean_i = F.sum(importance) / importance.size
+                mean_i_bc = F.broadcast_to(mean_i[None, ], importance.shape)
+                std_i = (F.sum((importance - mean_i_bc) ** 2) /
+                         importance.size) ** 0.5
+                cv = std_i / mean_i
+                return cv ** 2
+
+            importance_loss = importance_regularizer(
+                F.concat(sum(p_dists_history, []), axis=0))
+            sub_accum_loss += importance_loss * self.calc_importance_loss
+            reporter.report({'importance': importance_loss}, self)
 
         # Add l2 norm of language by usage freq
         if self.calc_word_l2_loss:
