@@ -154,7 +154,7 @@ def main():
         d = convert(train[:50])
         d = chainer.Variable(
             model.xp.array(d.tolist(), np.float32), volatile='auto')
-        generate(model, d, out=args.out, train=True,
+        generate(model, d, out=args.out, train=False,
                  printer=(i_epoch == args.epoch - 1))
 
         d = convert(test[:50])
