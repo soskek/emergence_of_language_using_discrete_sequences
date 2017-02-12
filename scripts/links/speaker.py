@@ -24,18 +24,26 @@ class NaiveSpeaker(chainer.Chain):
             l2=L.Linear(n_middle, n_middle),
             l3=L.Linear(n_middle, n_middle),
             l4=L.Linear(n_middle, n_units),
-            bn_list=chainer.ChainList(*[
-                #L.BatchNormalization(n_units, use_cudnn=False)
+            bn_list2=chainer.ChainList(*[
                 L.BatchNormalization(n_middle, use_cudnn=False)
                 for i in range(n_turn)
-            ])
+            ]),
+            bn_list3=chainer.ChainList(*[
+                L.BatchNormalization(n_middle, use_cudnn=False)
+                for i in range(n_turn)
+            ]),
+            bn_list4=chainer.ChainList(*[
+                L.BatchNormalization(n_units, use_cudnn=False)
+                for i in range(n_turn)
+            ]),
+            act1=L.PReLU(n_middle),
+            act2=L.PReLU(n_middle),
+            act3=L.PReLU(n_middle),
         )
         if reconstructor:
             self.add_link('reconstructor', reconstructor)
         else:
             self.reconstructor = None
-
-        self.act = F.relu
 
     def perceive(self, image, turn, train=True):
         hidden_image = self.sensor(image, turn, train=train)
@@ -45,11 +53,13 @@ class NaiveSpeaker(chainer.Chain):
         h1_image = self.l1_image(hidden_image)
         h1_canvas = self.l1_canvas(hidden_canvas)
 
-        h1 = self.act(h1_canvas + h1_image)
+        h1 = self.act1(h1_canvas + h1_image)
         h2 = self.l2(h1)
-        h2 = self.act(self.bn_list[turn](h2, test=not train))
-        h3 = self.act(self.l3(h2))
-        thought = F.tanh(self.l4(h3))
+        h2 = self.act2(self.bn_list2[turn](h2, test=not train))
+        h3 = self.l3(h2)
+        h3 = self.act3(self.bn_list3[turn](h3, test=not train))
+        h4 = self.l4(h3)
+        thought = F.tanh(self.bn_list4[turn](h4, test=not train))
         return thought
 
     def __call__(self, hidden_image, hidden_canvas, turn, train=True):

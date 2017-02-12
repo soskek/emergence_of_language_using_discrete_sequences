@@ -43,21 +43,36 @@ class NaiveCNNSensor(chainer.Chain):
 
 class NaiveFCSensor(chainer.Chain):
 
-    def __init__(self, n_in, middle_units, n_turn):
+    def __init__(self, n_in, middle_units, n_turn, drop_ratio=0.):
         super(NaiveFCSensor, self).__init__(
             l1=L.Linear(n_in, middle_units),
             l2=L.Linear(middle_units, middle_units),
             l3=L.Linear(middle_units, middle_units),
-            bn_list=chainer.ChainList(*[
+            act1=L.PReLU(middle_units),
+            act2=L.PReLU(middle_units),
+            act3=L.PReLU(middle_units),
+
+            bn_list1=chainer.ChainList(*[
                 L.BatchNormalization(middle_units, use_cudnn=False)
                 for i in range(n_turn)
-            ])
+            ]),
+            bn_list2=chainer.ChainList(*[
+                L.BatchNormalization(middle_units, use_cudnn=False)
+                for i in range(n_turn)
+            ]),
+            bn_list3=chainer.ChainList(*[
+                L.BatchNormalization(middle_units, use_cudnn=False)
+                for i in range(n_turn)
+            ]),
         )
-        self.act = F.relu
+        self.drop_ratio = drop_ratio
 
     def __call__(self, x, turn, train=True):
-        h1 = self.act(self.l1(x))
-        h2 = self.act(self.l2(h1))
-        h3 = self.act(self.l3(h2))
-        h3 = self.bn_list[turn](h3, test=not train)
+        h1 = self.act1(self.l1(x))
+        h1 = F.dropout(h1, ratio=self.drop_ratio, train=train)
+        h2 = self.l2(h1)
+        h2 = self.act2(self.bn_list2[turn](h2, test=not train))
+        h2 = F.dropout(h2, ratio=self.drop_ratio, train=train)
+        h3 = self.l3(h2)
+        h3 = self.act3(self.bn_list3[turn](h3, test=not train))
         return h3

@@ -14,14 +14,26 @@ import numpy as np
 
 class NaiveFCPainter(chainer.Chain):
 
-    def __init__(self, n_in, n_middle):
+    def __init__(self, n_in, n_middle, n_turn):
         super(NaiveFCPainter, self).__init__(
             l1=L.Linear(n_middle, n_middle),
-            l2=L.Linear(n_middle, n_in),
-        )
-        self.act = F.relu
+            l2=L.Linear(n_middle, n_middle),
+            l3=L.Linear(n_middle, n_in),
+            l3_gate=L.Linear(n_middle, n_in),
 
-    def __call__(self, concept, train=True):
-        h1 = self.act(self.l1(concept))
-        plus_draw = F.tanh(self.l2(h1))
-        return plus_draw ** 3
+            act1=L.PReLU(n_middle),
+            act2=L.PReLU(n_middle),
+
+            bn_list2=chainer.ChainList(*[
+                L.BatchNormalization(n_middle, use_cudnn=False)
+                for i in range(n_turn)
+            ])
+        )
+
+    def __call__(self, concept, turn, train=True):
+        h1 = self.act1(self.l1(concept))
+        h2 = self.l2(h1)
+        h2 = self.act2(self.bn_list2[turn](h2, test=not train))
+        plus_draw = F.tanh(self.l3(h2))
+        gate_draw = F.sigmoid(self.l3_gate(h2))
+        return plus_draw * gate_draw

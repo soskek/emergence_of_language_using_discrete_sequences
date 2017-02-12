@@ -23,14 +23,18 @@ class NaiveListener(chainer.Chain):
             l1_language=L.Linear(n_units, n_middle),
             l1_canvas=L.Linear(n_middle, n_middle),
             l2=L.Linear(n_middle, n_middle),
-            bn_concept_list=chainer.ChainList(*[
+            l3=L.Linear(n_middle, n_middle),
+            bn_list2=chainer.ChainList(*[
                 L.BatchNormalization(n_middle, use_cudnn=False)
                 for i in range(n_turn)
             ]),
-            bn_message_list=chainer.ChainList(*[
-                L.BatchNormalization(n_units, use_cudnn=False)
+            bn_list3=chainer.ChainList(*[
+                L.BatchNormalization(n_middle, use_cudnn=False)
                 for i in range(n_turn)
             ]),
+            act1=L.PReLU(n_middle),
+            act2=L.PReLU(n_middle),
+            act3=L.PReLU(n_middle),
         )
 
         if reconstructor:
@@ -44,25 +48,25 @@ class NaiveListener(chainer.Chain):
         return self.think(hidden_canvas, message_sentence,
                           turn=turn, train=train)
 
-    def paint(self, concept, train=True):
-        return self.painter(concept, train=train)
+    def paint(self, concept, turn, train=True):
+        return self.painter(concept, turn, train=train)
 
     def think(self, hidden_canvas, message_meaning, turn, train=True):
 
         h1_lang = self.l1_language(message_meaning)
         h1_canv = self.l1_canvas(hidden_canvas)
 
-        h1 = self.act(h1_lang + h1_canv)
-        concept = self.act(self.l2(h1))
-        concept = self.bn_concept_list[turn](
-            concept, test=not train)
+        h1 = self.act1(h1_lang + h1_canv)
+        h2 = self.l2(h1)
+        h2 = self.act2(self.bn_list2[turn](h2, test=not train))
+        h3 = self.l3(h2)
+        h3 = self.act3(self.bn_list3[turn](h3, test=not train))
+        concept = h3
         return concept
 
     def listen(self, message_sentence, turn, train=True):
         message_meaning = self.language.interpret_sentence(
             message_sentence, train=train)
-        message_meaning = self.bn_message_list[turn](
-            message_meaning, test=not train)
         return message_meaning
 
     def perceive(self, image, turn, train=True):

@@ -66,9 +66,9 @@ def generate(model, data, out='./', train=False, printer=False):
 
 def main():
     parser = argparse.ArgumentParser(description='Chainer example: MNIST')
-    parser.add_argument('--batchsize', '-b', type=int, default=100,
+    parser.add_argument('--batchsize', '-b', type=int, default=256,
                         help='Number of images in each mini-batch')
-    parser.add_argument('--epoch', '-e', type=int, default=20,
+    parser.add_argument('--epoch', '-e', type=int, default=15,
                         help='Number of sweeps over the dataset to train')
     parser.add_argument('--gpu', '-g', type=int, default=-1,
                         help='GPU ID (negative value indicates CPU)')
@@ -77,19 +77,19 @@ def main():
     parser.add_argument('--resume', '-r', default='',
                         help='Resume the training from snapshot')
 
-    parser.add_argument('--unit', '-u', type=int, default=128,
+    parser.add_argument('--unit', '-u', type=int, default=64,
                         help='Number of units')
-    parser.add_argument('--image-unit', '-i', type=int, default=256,
+    parser.add_argument('--image-unit', '-i', type=int, default=128,
                         help='Number of middel units for image expression')
 
-    parser.add_argument('--word', '-w', type=int, default=2,
+    parser.add_argument('--word', '-w', type=int, default=3,
                         help='Number of words in a message')
     parser.add_argument('--turn', '-t', type=int, default=3,
                         help='Number of turns')
     parser.add_argument('--vocab', '-v', type=int, default=32,
                         help='Number of words in vocab')
 
-    parser.add_argument('--drop-ratio', '--dropout', type=float, default=0.,
+    parser.add_argument('--drop-ratio', '--dropout', type=float, default=0.1,
                         help='dropout ratio')
 
     args = parser.parse_args()
@@ -113,7 +113,7 @@ def main():
     # Setup an optimizer
     optimizer = chainer.optimizers.Adam()
     optimizer.setup(model)
-    optimizer.add_hook(chainer.optimizer.GradientClipping(10.))
+    optimizer.add_hook(chainer.optimizer.GradientClipping(1.))
     # optimizer.add_hook(chainer.optimizer.WeightDecay(0.0001))
 
     # Load the MNIST dataset

@@ -23,13 +23,15 @@ class World(chainer.Chain):
 
     def __init__(self, n_in, n_middle, n_units, n_vocab, n_word, n_turn,
                  drop_ratio=0.):
-        sensor_for_listener = Sensor.NaiveFCSensor(n_in, n_middle, n_turn)
-        sensor_for_speaker = Sensor.NaiveFCSensor(n_in, n_middle, n_turn + 1)
+        sensor_for_listener = Sensor.NaiveFCSensor(
+            n_in, n_middle, n_turn, drop_ratio)
+        sensor_for_speaker = Sensor.NaiveFCSensor(
+            n_in, n_middle, n_turn + 1, drop_ratio)
 
         reconstructor_for_listener = Recon.NaiveFCReconstructor(n_in, n_middle)
         reconstructor_for_speaker = Recon.NaiveFCReconstructor(n_in, n_middle)
 
-        painter = Painter.NaiveFCPainter(n_in, n_middle)
+        painter = Painter.NaiveFCPainter(n_in, n_middle, n_turn)
 
         language_for_listener = Language.NaiveLanguage(n_units, n_vocab, n_turn,
                                                        listener=True)
@@ -58,7 +60,7 @@ class World(chainer.Chain):
 
         self.train = True
 
-        self.calc_reconstruction = True
+        self.calc_reconstruction = False
         self.calc_full_turn = True
         self.calc_modification = False
         self.calc_orthogonal_loss = False
@@ -130,14 +132,17 @@ class World(chainer.Chain):
                 sampled_word_idx_seq, turn, train=train)
 
             # ZURU
-            # message_meaning += thought
+            #message_meaning += thought
 
             concept = self.listener.think(
                 hidden_canvas, message_meaning, turn, train=train)
-            plus_draw = self.listener.painter(concept, train=train)
 
             # Paint
-            canvas = canvas + plus_draw
+            # canvas = self.listener.painter(
+            #    canvas, concept, turn, train=train)
+            canvas += self.listener.painter(
+                concept, turn, train=train)
+
             # Physical limitations of canvas (leaky to make gradient active)
             canvas = F.clip(canvas, 0., 1.) * 0.9 + canvas * 0.1
 
@@ -176,7 +181,7 @@ class World(chainer.Chain):
 
         # Add loss of self-reconstruction
         if self.calc_reconstruction:
-            sub_accum_loss += accum_loss_reconstruction * 0.01
+            sub_accum_loss += accum_loss_reconstruction * 0.001
             reporter.report({'recon': accum_loss_reconstruction}, self)
 
         # Add loss at full turn
@@ -200,10 +205,10 @@ class World(chainer.Chain):
         # Add loss to orthogonal matrix
         if self.calc_orthogonal_loss:
             def orthogonal_regularizer(M):
-                MM = F.matmul(M, F.transpose(M))
+                nM = F.normalize(M)
+                MM = F.matmul(nM, F.transpose(nM))
                 iden = self.xp.identity(MM.shape[0])
-                norm_loss = F.sum((iden - MM * iden) ** 2)
-                return F.sum((MM - MM * iden) ** 2) + norm_loss
+                return F.sum((MM - MM * iden) ** 2)
 
             orthogonal_loss = orthogonal_regularizer(
                 self.speaker.language.expression.W) + \
