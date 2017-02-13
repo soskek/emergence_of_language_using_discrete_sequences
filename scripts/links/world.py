@@ -7,7 +7,7 @@ import chainer.functions as F
 import chainer.links as L
 from chainer import training
 from chainer.training import extensions
-from chainer import reporter
+from chainer import report
 
 import numpy as np
 
@@ -66,7 +66,6 @@ class World(chainer.Chain):
         # self.calc_orthogonal_loss = False
         self.calc_orthogonal_loss = True
         self.calc_importance_loss = co_importance
-        self.calc_word_l2_loss = False
 
         self.baseline = None
 
@@ -162,13 +161,13 @@ class World(chainer.Chain):
             loss = F.sum(raw_loss) / image.data.size
             loss_list.append(loss)
 
-            reporter.report({'l{}'.format(turn): loss}, self)
-            reporter.report({'p{}'.format(turn): self.xp.exp(
+            report({'l{}'.format(turn): loss}, self)
+            report({'p{}'.format(turn): self.xp.exp(
                 log_probability.data.mean())}, self)
 
         # Add the last loss
         accum_loss += loss_list[-1]
-        reporter.report({'loss': accum_loss}, self)
+        report({'loss': accum_loss}, self)
 
         # Add (minus) reinforce
         reward = (1. - raw_loss_list[-1]).data
@@ -180,13 +179,13 @@ class World(chainer.Chain):
             if not self.baseline is None \
             else self.xp.mean(reward)
         accum_reinforce = reinforce
-        reporter.report({'reward': accum_reinforce}, self)
+        report({'reward': accum_reinforce}, self)
         sub_accum_loss -= accum_reinforce * 0.00001
 
         # Add loss of self-reconstruction
         if self.calc_reconstruction:
             sub_accum_loss += accum_loss_reconstruction * 0.001
-            reporter.report({'recon': accum_loss_reconstruction}, self)
+            report({'recon': accum_loss_reconstruction}, self)
 
         # Add loss at full turn
         if self.calc_full_turn:
@@ -195,7 +194,7 @@ class World(chainer.Chain):
                 loss_list[j] * decay ** (n_turn - j - 1)
                 for j in range(n_turn - 1))
             sub_accum_loss += accum_loss_full_turn
-            reporter.report({'full': accum_loss_full_turn}, self)
+            report({'full': accum_loss_full_turn}, self)
 
         # Add loss of modification
         if self.calc_modification:
@@ -204,7 +203,7 @@ class World(chainer.Chain):
                 F.relu(margin + loss_list[i] - loss_list[i - 1].data)
                 for i in range(1, n_turn))
             sub_accum_loss += accum_loss_modification
-            reporter.report({'mod': accum_loss_modification}, self)
+            report({'mod': accum_loss_modification}, self)
 
         # Add loss to orthogonal matrix
         if self.calc_orthogonal_loss:
@@ -219,7 +218,7 @@ class World(chainer.Chain):
                 orthogonal_regularizer(
                     self.listener.language.definition.W)
             sub_accum_loss += orthogonal_loss * 0.01
-            reporter.report({'ortho': orthogonal_loss}, self)
+            report({'ortho': orthogonal_loss}, self)
 
         # Add balancing vocabulary
         if self.calc_importance_loss:
@@ -232,25 +231,16 @@ class World(chainer.Chain):
                 cv = std_i / mean_i
                 return cv ** 2
 
-            importance_loss = importance_regularizer(
-                F.concat(sum(p_dists_history, []), axis=0))
+            concat_p = F.concat(sum(p_dists_history, []), axis=0)
+            importance_loss = importance_regularizer(concat_p)
             sub_accum_loss += importance_loss * self.calc_importance_loss
-            reporter.report({'importance': importance_loss}, self)
 
-        # Add l2 norm of language by usage freq
-        if self.calc_word_l2_loss:
-            def word_l2(idx):
-                definition_l2 = self.listener.language.definition(idx) ** 2
-                expression_l2 = F.embed_id(
-                    idx, self.speaker.language.expression.W) ** 2
-                return definition_l2 + expression_l2
-                word_l2_loss = F.sum(
-                    sum(sum(word_l2(i) for i in sent)
-                        for sent in sentence_history)) / batchsize
-            sub_accum_loss += word_l2_loss * 0.0001
-            reporter.report({'word_l2': word_l2_loss}, self)
+            p_mean = F.sum(concat_p, axis=0) / concat_p.shape[0]
+            report({'p_mean': p_mean}, self)
 
-        reporter.report({'total': accum_loss}, self)
+            report({'importance': importance_loss}, self)
+
+        report({'total': accum_loss}, self)
 
         # Merge main and sub loss
         accum_loss += sub_accum_loss

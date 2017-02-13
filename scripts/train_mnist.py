@@ -2,6 +2,10 @@
 from __future__ import print_function
 import argparse
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 import chainer
 import chainer.functions as F
 import chainer.links as L
@@ -22,9 +26,6 @@ import json
 
 
 def generate(model, data, out='./', train=False, printer=False):
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
     prev_train = model.train
     model.train = False
     sentence_history, log_prob_history, canvas_history = model(
@@ -40,6 +41,7 @@ def generate(model, data, out='./', train=False, printer=False):
         for ai, xi in zip(ax.ravel(), x):
             ai.imshow(xi.reshape(28, 28), cmap='Greys_r')
         fig.savefig(filename)
+        plt.clf()
 
     save_images(true_image.data, out + str(train) + '_.png')
     if printer:
@@ -166,31 +168,38 @@ def main():
             model.xp.array(d.tolist(), np.float32), volatile='auto')
         generate(model, d, out=args.out, train=False,
                  printer=(i_epoch == args.epoch - 1))
+        del d
 
         print(i_epoch, 'loss :', accum_loss_data / n_iters)
-
-        model.train = False
-        accum_valid_loss_data = 0.
-
-        for i_iter in range(len(test) // batchsize + 1):
-            ids = [i_iter * batchsize + idx for idx in range(batchsize)]
-            ids = [idx for idx in ids if idx < len(test)]
-            batch = [test[idx]
-                     for idx in ids if idx < len(test)]
-            if not batch:
-                continue
-            batch = chainer.Variable(
-                model.xp.array(convert(batch).tolist(), np.float32),
-                volatile='auto')
-            valid_loss_data = model(batch).data
-            valid_loss_data -= model.sub_accum_loss
-            accum_valid_loss_data += valid_loss_data * len(ids)
-
-        print(i_epoch, 'valid:', accum_valid_loss_data / len(test))
-        model.train = True
+        mean_valid_loss_data = evaluate(model, test, batchsize, convert)
+        print(i_epoch, 'valid:', mean_valid_loss_data)
 
     import chainer.serializers as S
     S.save_npz(args.out + 'saved_model.model', model)
+
+
+def evaluate(model, test, batchsize, convert):
+
+    model.train = False
+    accum_valid_loss_data = 0.
+
+    for i_iter in range(len(test) // batchsize + 1):
+        ids = [i_iter * batchsize + idx for idx in range(batchsize)]
+        ids = [idx for idx in ids if idx < len(test)]
+        batch = [test[idx]
+                 for idx in ids if idx < len(test)]
+        if not batch:
+            continue
+        batch = chainer.Variable(
+            model.xp.array(convert(batch).tolist(), np.float32),
+            volatile='auto')
+        valid_loss_data = model(batch).data
+        valid_loss_data -= model.sub_accum_loss
+        accum_valid_loss_data += valid_loss_data * len(ids)
+
+    model.train = True
+
+    return accum_valid_loss_data / len(test)
 
 
 if __name__ == '__main__':
