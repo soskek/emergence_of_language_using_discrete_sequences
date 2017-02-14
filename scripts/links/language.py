@@ -8,8 +8,16 @@ import chainer.links as L
 from chainer import training
 from chainer.training import extensions
 from chainer import reporter
+from chainer import cuda
 
 import numpy as np
+
+
+def choice_by_gumbel_max_trick(probs):
+    xp = cuda.get_array_module(probs.data)
+    noise = xp.random.gumbel(loc=0, scale=1, size=probs.shape)
+    sampled_ids = F.argmax(probs + noise, axis=1)
+    return sampled_ids
 
 
 class NaiveLanguage(chainer.Chain):
@@ -48,28 +56,12 @@ class NaiveLanguage(chainer.Chain):
         match_score = F.linear(x, self.definition.W)
         probability = F.softmax(match_score)
 
-        prob_data = probability.data
-        if self.xp != np:
-            prob_data = self.xp.asnumpy(prob_data)
-        batchsize = x.data.shape[0]
-
-        #train = True
         if train:
-            sampled_ids = np.zeros((batchsize,), np.int32)
-            for i_batch, one_prob_data in enumerate(prob_data):
-                sampled_ids[i_batch] = np.random.choice(
-                    self.n_vocab, p=one_prob_data)
+            sampled_ids = choice_by_gumbel_max_trick(probability)
         else:
-            sampled_ids = np.zeros((batchsize,), np.int32)
-            for i_batch, one_prob_data in enumerate(prob_data):
-                sampled_ids[i_batch] = np.argmax(
-                    one_prob_data).astype(np.int32)
+            sampled_ids = F.argmax(probability, axis=1)
 
-        if self.xp != np:
-            sampled_ids = self.xp.array(sampled_ids)
-        sampled_ids = chainer.Variable(sampled_ids, volatile='auto')
         sampled_probability = F.select_item(probability, sampled_ids)
-
         return sampled_ids, sampled_probability, probability
 
     def interpret_word(self, x):
