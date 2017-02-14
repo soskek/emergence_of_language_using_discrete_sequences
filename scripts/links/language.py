@@ -100,6 +100,8 @@ class NaiveLanguage(chainer.Chain):
             self.decoder.h = thought
             x_input = F.broadcast_to(
                 self.bos, (thought.data.shape[0], len(self.bos.data)))
+
+            # TODO: beam-search
             for i in range(n_word):
                 h = self.decoder(x_input)
                 sampled_word_idx, probability, p_dist = self.decode_word(

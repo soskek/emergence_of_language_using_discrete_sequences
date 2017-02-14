@@ -143,7 +143,7 @@ def main():
         n_iters = len(train) // batchsize
         permutation = np.random.permutation(len(train))
         accum_loss_data = 0.
-        for i_iter in tqdm(range(n_iters)):
+        for i_iter in range(n_iters):
             ids = permutation[i_iter * batchsize:
                               (i_iter + 1) * batchsize]
             batch = [train[idx] for idx in ids]
@@ -155,6 +155,7 @@ def main():
             loss.backward()
             optimizer.update()
             accum_loss_data += loss.data - model.sub_accum_loss
+            del loss
 
         convert = chainer.dataset.convert.concat_examples
         d = convert(train[:50])
