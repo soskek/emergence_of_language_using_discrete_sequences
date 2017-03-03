@@ -13,10 +13,10 @@ from chainer import cuda
 import numpy as np
 
 
-def choice_by_gumbel_max_trick(probs):
-    xp = cuda.get_array_module(probs.data)
-    noise = xp.random.gumbel(loc=0, scale=1, size=probs.shape)
-    sampled_ids = F.argmax(probs + noise, axis=1)
+def choice_by_gumbel_max_trick(scores):
+    xp = cuda.get_array_module(scores.data)
+    noise = xp.random.gumbel(loc=0, scale=1, size=scores.shape)
+    sampled_ids = F.argmax(scores + noise, axis=1)
     return sampled_ids
 
 
@@ -53,14 +53,14 @@ class NaiveLanguage(chainer.Chain):
         self.bos.data[:] = 0
 
     def decode_word(self, x, train=True):
-        match_score = F.linear(x, self.definition.W)
-        probability = F.softmax(match_score)
+        match_scores = F.linear(x, self.definition.W)
 
         if train:
-            sampled_ids = choice_by_gumbel_max_trick(probability)
+            sampled_ids = choice_by_gumbel_max_trick(match_scores)
         else:
-            sampled_ids = F.argmax(probability, axis=1)
+            sampled_ids = F.argmax(match_scores, axis=1)
 
+        probability = F.softmax(match_scores)
         sampled_probability = F.select_item(probability, sampled_ids)
         return sampled_ids, sampled_probability, probability
 

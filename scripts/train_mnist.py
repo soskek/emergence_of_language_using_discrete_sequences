@@ -42,6 +42,7 @@ def generate(model, data, out='./', train=False, printer=False):
             ai.imshow(xi.reshape(28, 28), cmap='Greys_r')
         fig.savefig(filename)
         plt.clf()
+        plt.close('all')
 
     save_images(true_image.data, out + str(train) + '_.png')
     if printer:
@@ -57,13 +58,6 @@ def generate(model, data, out='./', train=False, printer=False):
                 print(str(i) + ",\t",
                       [int(word_batch[i]) for word_batch in word_batch_list],
                       log_prob_batch[i])
-        save_target = [
-            [
-                [[int(word[i]) for word in sent] for sent in sentence_history],
-                [float(lpb[i]) for lpb in log_prob_history]
-            ]
-            for i in range(data.shape[0])]
-    json.dump(save_target, open(out + str(train) + 'seq.json', 'w'))
 
 
 def main():
