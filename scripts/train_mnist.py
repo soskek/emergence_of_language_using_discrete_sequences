@@ -9,10 +9,11 @@ import matplotlib.pyplot as plt
 import chainer
 import chainer.functions as F
 import chainer.links as L
+import chainer.serializers as S
 from chainer import training
 from chainer.training import extensions
 
-#from links import communicator
+# from links import communicator
 from links import world
 
 import numpy as np
@@ -25,7 +26,7 @@ except:
 import json
 
 
-def generate(model, data, out='./', train=False, printer=False):
+def generate(model, data, epoch=0, out='./', train=False, printer=False):
     prev_train = model.train
     model.train = False
     sentence_history, log_prob_history, canvas_history = model(
@@ -38,6 +39,10 @@ def generate(model, data, out='./', train=False, printer=False):
         x = np.array(x.tolist(), np.float32)
         width = x.shape[0]
         fig, ax = plt.subplots(1, width, figsize=(1 * width, 1))  # , dpi=20)
+        for a in ax:
+            a.set_xticklabels([])
+            a.set_yticklabels([])
+
         for ai, xi in zip(ax.ravel(), x):
             ai.imshow(xi.reshape(28, 28), cmap='Greys_r')
         fig.savefig(filename)
@@ -48,7 +53,8 @@ def generate(model, data, out='./', train=False, printer=False):
     if printer:
         print('save _.png')
     for i in range(model.n_turn):
-        save_images(canvas_history[i], out + str(train) + '{}.png'.format(i))
+        save_images(
+            canvas_history[i], out + str(train) + '{}e_{}.png'.format(epoch, i))
         if printer:
             print('save {}.png'.format(i))
     for i in range(data.shape[0]):
@@ -58,6 +64,14 @@ def generate(model, data, out='./', train=False, printer=False):
                 print(str(i) + ",\t",
                       [int(word_batch[i]) for word_batch in word_batch_list],
                       log_prob_batch[i])
+    sentence_log = [[[[int(word_batch[i]) for word_batch in word_batch_list],
+                      float(log_prob_batch[i])]
+                     for log_prob_batch, word_batch_list
+                     in zip(log_prob_history, sentence_history)]
+                    for i in range(data.shape[0])]
+    json_f = open(
+        out + 'message.' + str(train) + '{}e.json'.format(epoch), 'w')
+    json.dump(sentence_log, json_f)
 
 
 def main():
@@ -81,6 +95,9 @@ def main():
     parser.add_argument('--co-importance', '-importance', '-imp',
                         type=float, default=0.,
                         help='Coef. of importance loss')
+    parser.add_argument('--co-orthogonal', '-orthogonal', '-ort',
+                        type=float, default=0.,
+                        help='Coef. of orthogonal loss')
 
     parser.add_argument('--word', '-w', type=int, default=3,
                         help='Number of words in a message')
@@ -104,7 +121,8 @@ def main():
     model = world.World(
         28 * 28, args.image_unit, args.unit,
         n_vocab=args.vocab, n_word=args.word, n_turn=args.turn,
-        drop_ratio=args.drop_ratio, co_importance=args.co_importance)
+        drop_ratio=args.drop_ratio, co_importance=args.co_importance,
+        co_orthogonal=args.co_orthogonal)
 
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()  # Make a specified GPU current
@@ -132,8 +150,10 @@ def main():
     batchsize = args.batchsize
     convert = chainer.dataset.convert.concat_examples
     log_report = extensions.LogReport()
+    best_valid = 10000000.
+    best_keep = 0
     print('start')
-    for i_epoch in range(args.epoch):
+    for i_epoch in range(1, args.epoch + 1):
         n_iters = len(train) // batchsize
         permutation = np.random.permutation(len(train))
         accum_loss_data = 0.
@@ -155,22 +175,32 @@ def main():
         d = convert(train[:50])
         d = chainer.Variable(
             model.xp.array(d.tolist(), np.float32), volatile='auto')
-        generate(model, d, out=args.out, train=True,
+        generate(model, d, epoch=i_epoch, out=args.out, train=True,
                  printer=(i_epoch == args.epoch - 1))
 
         d = convert(test[:50])
         d = chainer.Variable(
             model.xp.array(d.tolist(), np.float32), volatile='auto')
-        generate(model, d, out=args.out, train=False,
+        generate(model, d, epoch=i_epoch, out=args.out, train=False,
                  printer=(i_epoch == args.epoch - 1))
         del d
 
         print(i_epoch, 'loss :', accum_loss_data / n_iters)
         mean_valid_loss_data = evaluate(model, test, batchsize, convert)
-        print(i_epoch, 'valid:', mean_valid_loss_data)
 
-    import chainer.serializers as S
-    S.save_npz(args.out + 'saved_model.model', model)
+        if mean_valid_loss_data < best_valid:
+            best_valid = mean_valid_loss_data
+            best_keep = 0
+            S.save_npz(args.out + 'saved_model.model', model)
+            print(i_epoch, 'valid:', mean_valid_loss_data, '*')
+        else:
+            best_keep += 1
+            print(i_epoch, 'valid:', mean_valid_loss_data)
+        if best_keep >= 10:
+            break
+
+    #S.save_npz(args.out + 'saved_model.model', model)
+    print('Finish at {}/{} epoch'.format(i_epoch, args.epoch))
 
 
 def evaluate(model, test, batchsize, convert):

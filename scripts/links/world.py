@@ -22,7 +22,7 @@ import reconstructor as Recon
 class World(chainer.Chain):
 
     def __init__(self, n_in, n_middle, n_units, n_vocab, n_word, n_turn,
-                 drop_ratio=0., co_importance=0.):
+                 drop_ratio=0., co_importance=0., co_orthogonal=0.):
         sensor_for_listener = Sensor.NaiveFCSensor(
             n_in, n_middle, n_turn, drop_ratio)
         sensor_for_speaker = Sensor.NaiveFCSensor(
@@ -64,7 +64,7 @@ class World(chainer.Chain):
         self.calc_full_turn = True
         self.calc_modification = False
         # self.calc_orthogonal_loss = False
-        self.calc_orthogonal_loss = True
+        self.calc_orthogonal_loss = co_orthogonal
         self.calc_importance_loss = co_importance
 
         self.baseline = None
@@ -217,7 +217,7 @@ class World(chainer.Chain):
                 self.speaker.language.definition.W) + \
                 orthogonal_regularizer(
                     self.listener.language.definition.W)
-            sub_accum_loss += orthogonal_loss * 0.01
+            sub_accum_loss += orthogonal_loss * self.calc_orthogonal_loss
             report({'ortho': orthogonal_loss}, self)
 
         # Add balancing vocabulary
