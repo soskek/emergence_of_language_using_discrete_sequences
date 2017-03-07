@@ -252,3 +252,44 @@ class World(chainer.Chain):
                 [F.clip(cv, 0., 1.).data for cv in canvas_history]
         else:
             return accum_loss
+
+    def generate(self, sampled_word_idx_seq, shape):
+        n_turn, n_word = self.n_turn, self.n_word
+        train = self.train
+
+        batchsize = shape[0]
+        sentence_history = []
+        log_prob_history = []
+        canvas_history = []
+        p_dists_history = []
+
+        # Initialize canvas of Listener
+        canvas = chainer.Variable(
+            self.xp.ones(shape, np.float32), volatile='auto')
+
+        for turn in range(n_turn):
+            # [Listener]
+            # Interpret the expression & Paint it into canvas
+            # Perceive (only canvas)
+            hidden_canvas = self.listener.perceive(canvas, turn, train=train)
+
+            # Interpret the expression with current situation (canvas)
+            message_meaning = self.listener.listen(
+                sampled_word_idx_seq, turn, train=train)
+
+            concept = self.listener.think(
+                hidden_canvas, message_meaning, turn, train=train)
+
+            # Paint
+            # canvas = self.listener.painter(
+            #    canvas, concept, turn, train=train)
+            canvas += self.listener.painter(
+                concept, turn, train=train)
+
+            # Physical limitations of canvas (leaky to make gradient active)
+            canvas = F.clip(canvas, 0., 1.) * 0.9 + canvas * 0.1
+
+            # Save
+            canvas_history.append(canvas)
+
+        return [F.clip(cv, 0., 1.).data for cv in canvas_history]
