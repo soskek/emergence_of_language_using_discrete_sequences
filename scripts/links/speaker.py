@@ -69,3 +69,8 @@ class NaiveSpeaker(chainer.Chain):
         sampled_word_idx_seq, total_log_probability, p_dists = \
             self.language.decode_thought(thought, n_word, train=train)
         return sampled_word_idx_seq, total_log_probability, p_dists
+
+    def speak_loss(self, thought, word_idx_seq, n_word=3, train=True):
+        loss = self.language.decode_thought_loss(
+            thought, word_idx_seq, n_word, train=train)
+        return loss

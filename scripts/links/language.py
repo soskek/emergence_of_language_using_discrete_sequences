@@ -104,3 +104,28 @@ class NaiveLanguage(chainer.Chain):
                 x_input = self.interpret_word(sampled_word_idx)
             self.decoder.reset_state()
         return sampled_word_idx_seq, total_log_probability, p_dists
+
+    def decode_thought_loss(self, thought, word_idx_seq, n_word, train=True):
+        loss = 0.
+        if n_word == 1:
+            _, _, p_dist = self.decode_word(
+                thought, train=train)
+            t = word_idx_seq[0]
+            log_p = F.log(F.select_item(p_dist, t))
+            loss += F.sum(- log_p) / log_p.shape[0]
+        else:
+            self.decoder.reset_state()
+            self.decoder.h = thought
+            x_input = F.broadcast_to(
+                self.bos, (thought.data.shape[0], len(self.bos.data)))
+
+            for i in range(n_word):
+                h = self.decoder(x_input)
+                _, _, p_dist = self.decode_word(
+                    h, train=train)
+                t = word_idx_seq[i]
+                log_p = F.log(F.select_item(p_dist, t))
+                loss += F.sum(- log_p) / log_p.shape[0]
+                x_input = self.interpret_word(t)
+            self.decoder.reset_state()
+        return loss

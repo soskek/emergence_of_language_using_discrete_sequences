@@ -293,3 +293,64 @@ class World(chainer.Chain):
             canvas_history.append(canvas)
 
         return [F.clip(cv, 0., 1.).data for cv in canvas_history]
+
+    def infer(self, sampled_word_idx_seq, shape):
+        self.train = False
+        train = False
+        n_turn, n_word = self.n_turn, self.n_word
+
+        batchsize = shape[0]
+
+        # Initialize dreams of speaker
+        dream = chainer.Link(dream=shape)
+        if np != self.xp:
+            dream.to_gpu()
+            sampled_word_idx_seq = [
+                self.xp.array(x) for x in sampled_word_idx_seq]
+
+        dream.dream.data[:] = 0.01
+        optimizer = chainer.optimizers.Adam(0.1)
+        optimizer.setup(dream)
+
+        n_iter = 400
+        decay = 0.99
+        for i_iter in range(n_iter):
+            if i_iter == 200:
+                optimizer.alpha /= 4
+                decay = 1 - (1 - decay) / 8
+                print('change alpha')
+            dream.dream.data[:] *= decay
+            dream.dream.data[:] = self.xp.clip(dream.dream.data[:], 0., 1.)
+
+            turn = 0
+            # Initialize canvas of Listener
+            canvas = chainer.Variable(
+                self.xp.ones(shape, np.float32), volatile='off')
+
+            # [Speaker]
+            # Express the image x compared to canvas
+            # Perceive
+            hidden_canvas = self.speaker.perceive(
+                canvas, turn, train=train)
+
+            image = dream.dream
+            image = F.where(self.xp.random.uniform(size=shape) < 0.1,
+                            self.xp.zeros(shape).astype('f'), image)
+            # Percieve
+            hidden_image = self.speaker.perceive(
+                image, n_turn, train=train)
+
+            thought = self.speaker.think(
+                hidden_image, hidden_canvas, turn, train=train)
+
+            loss = self.speaker.speak_loss(
+                thought, sampled_word_idx_seq, n_word=n_word, train=train)
+            print(i_iter, loss.data)
+            dream.zerograds()
+            loss.backward()
+            self.zerograds()
+            optimizer.update()
+
+            dream.dream.data[:] = self.xp.clip(dream.dream.data[:], 0., 1.)
+
+        return F.clip(dream.dream.data, 0., 1.).data
