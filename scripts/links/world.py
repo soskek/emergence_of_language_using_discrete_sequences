@@ -320,6 +320,7 @@ class World(chainer.Chain):
                 decay = 1 - (1 - decay) / 8
                 print('change alpha')
             dream.dream.data[:] *= decay
+
             dream.dream.data[:] = self.xp.clip(dream.dream.data[:], 0., 1.)
 
             turn = 0
