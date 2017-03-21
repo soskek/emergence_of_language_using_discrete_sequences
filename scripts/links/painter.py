@@ -37,3 +37,46 @@ class NaiveFCPainter(chainer.Chain):
         plus_draw = F.tanh(self.l3(h2))
         gate_draw = F.sigmoid(self.l3_gate(h2))
         return plus_draw * gate_draw
+
+
+class DeconvPainter(chainer.Chain):
+    """
+    https://github.com/pfnet/chainer/tree/master/examples/dcgan
+
+    Now, turn is ignored.
+    """
+
+    def __init__(self, n_hidden, bottom_width=4, ch=512, wscale=0.02):
+        self.n_hidden = n_hidden
+        self.ch = ch
+        self.bottom_width = bottom_width
+        w = chainer.initializers.Normal(wscale)
+        super(Generator, self).__init__(
+            l0=L.Linear(self.n_hidden, bottom_width *
+                        bottom_width * ch, initialW=w),
+            dc1=L.Deconvolution2D(ch, ch // 2, 4, 2, 1, initialW=w),
+            dc2=L.Deconvolution2D(ch // 2, ch // 4, 4, 2, 1, initialW=w),
+            dc3=L.Deconvolution2D(ch // 4, ch // 8, 4, 2, 1, initialW=w),
+            dc4=L.Deconvolution2D(ch // 8, 3, 3, 1, 1, initialW=w),
+            bn0=L.BatchNormalization(bottom_width * bottom_width * ch),
+            bn1=L.BatchNormalization(ch // 2),
+            bn2=L.BatchNormalization(ch // 4),
+            bn3=L.BatchNormalization(ch // 8),
+        )
+
+    def make_hidden(self, batchsize):
+        return numpy.random.uniform(-1, 1, (batchsize, self.n_hidden, 1, 1))\
+            .astype(numpy.float32)
+
+    def __call__(self, concept, turn, train=True):
+        test = not train
+        new_shape = (concept.data.shape[0], self.ch,
+                     self.bottom_width, self.bottom_width)
+        h = F.reshape(
+            F.relu(self.bn0(self.l0(concept), test=test)),
+            new_shape)
+        h = F.relu(self.bn1(self.dc1(h), test=test))
+        h = F.relu(self.bn2(self.dc2(h), test=test))
+        h = F.relu(self.bn3(self.dc3(h), test=test))
+        x = F.sigmoid(self.dc4(h))
+        return x
