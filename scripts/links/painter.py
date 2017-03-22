@@ -51,7 +51,7 @@ class DeconvPainter(chainer.Chain):
         self.ch = ch
         self.bottom_width = bottom_width
         w = chainer.initializers.Normal(wscale)
-        super(Generator, self).__init__(
+        super(DeconvPainter, self).__init__(
             l0=L.Linear(self.n_hidden, bottom_width *
                         bottom_width * ch, initialW=w),
             dc1=L.Deconvolution2D(ch, ch // 2, 4, 2, 1, initialW=w),

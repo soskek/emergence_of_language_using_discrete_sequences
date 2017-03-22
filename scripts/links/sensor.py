@@ -96,7 +96,7 @@ class ConvSensor(chainer.Chain):
 
     def __init__(self, n_units, bottom_width=4, ch=512, wscale=0.02):
         w = chainer.initializers.Normal(wscale)
-        super(Discriminator, self).__init__(
+        super(ConvSensor, self).__init__(
             c0_0=L.Convolution2D(3, ch // 8, 3, 1, 1, initialW=w),
             c0_1=L.Convolution2D(ch // 8, ch // 4, 4, 2, 1, initialW=w),
             c1_0=L.Convolution2D(ch // 4, ch // 4, 3, 1, 1, initialW=w),

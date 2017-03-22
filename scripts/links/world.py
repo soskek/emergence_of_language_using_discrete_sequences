@@ -16,22 +16,24 @@ import listener as Listener
 import painter as Painter
 import sensor as Sensor
 import speaker as Speaker
-import reconstructor as Recon
 
 
 class World(chainer.Chain):
 
     def __init__(self, n_in, n_middle, n_units, n_vocab, n_word, n_turn,
-                 drop_ratio=0., co_importance=0., co_orthogonal=0.):
-        sensor_for_listener = Sensor.NaiveFCSensor(
-            n_in, n_middle, n_turn, drop_ratio)
-        sensor_for_speaker = Sensor.NaiveFCSensor(
-            n_in, n_middle, n_turn + 1, drop_ratio)
+                 drop_ratio=0., co_importance=0., co_orthogonal=0.,
+                 cifar=True):
 
-        reconstructor_for_listener = Recon.NaiveFCReconstructor(n_in, n_middle)
-        reconstructor_for_speaker = Recon.NaiveFCReconstructor(n_in, n_middle)
-
-        painter = Painter.NaiveFCPainter(n_in, n_middle, n_turn)
+        if cifar:
+            sensor_for_listener = Sensor.ConvSensor(n_middle)
+            sensor_for_speaker = Sensor.ConvSensor(n_middle)
+            painter = Painter.DeconvPainter(n_middle)
+        else:
+            sensor_for_listener = Sensor.NaiveFCSensor(
+                n_in, n_middle, n_turn, drop_ratio)
+            sensor_for_speaker = Sensor.NaiveFCSensor(
+                n_in, n_middle, n_turn + 1, drop_ratio)
+            painter = Painter.NaiveFCPainter(n_in, n_middle, n_turn)
 
         language_for_listener = Language.NaiveLanguage(n_units, n_vocab, n_turn,
                                                        listener=True)
@@ -41,13 +43,11 @@ class World(chainer.Chain):
         listener = Listener.NaiveListener(n_in, n_middle, n_units, n_turn,
                                           sensor_for_listener,
                                           language_for_listener,
-                                          painter,
-                                          reconstructor_for_listener)
+                                          painter)
 
         speaker = Speaker.NaiveSpeaker(n_in, n_middle, n_units, n_turn,
                                        sensor_for_speaker,
-                                       language_for_speaker,
-                                       reconstructor_for_speaker)
+                                       language_for_speaker)
 
         super(World, self).__init__(
             listener=listener,
@@ -60,7 +60,6 @@ class World(chainer.Chain):
 
         self.train = True
 
-        self.calc_reconstruction = False
         self.calc_full_turn = True
         self.calc_modification = False
         # self.calc_orthogonal_loss = False
@@ -78,8 +77,6 @@ class World(chainer.Chain):
         accum_loss = 0.
         sub_accum_loss = 0.
 
-        accum_loss_reconstruction = 0.
-
         batchsize = image.data.shape[0]
         sentence_history = []
         log_prob_history = []
@@ -88,7 +85,7 @@ class World(chainer.Chain):
 
         # Initialize canvas of Listener
         canvas = chainer.Variable(
-            self.xp.ones(image.data.shape, np.float32), volatile='auto')
+            self.xp.zeros(image.data.shape, np.float32), volatile='auto')
 
         loss_list = []
         raw_loss_list = []
@@ -97,21 +94,11 @@ class World(chainer.Chain):
         # Percieve
         hidden_image = self.speaker.perceive(image, n_turn, train=train)
         # bn_list[n_turn] is used for real image
-
-        # Self-reconstruction
-        if self.calc_reconstruction:
-            loss_recon = self.speaker.reconstructor(image, hidden_image)
-            accum_loss_reconstruction += loss_recon
-
         for turn in range(n_turn):
             # [Speaker]
             # Express the image x compared to canvas
             # Perceive
             hidden_canvas = self.speaker.perceive(canvas, turn, train=train)
-            # Self-reconstruction
-            if self.calc_reconstruction:
-                loss_recon = self.speaker.reconstructor(canvas, hidden_canvas)
-                accum_loss_reconstruction += loss_recon
 
             # Express
             thought = self.speaker.think(
@@ -124,10 +111,6 @@ class World(chainer.Chain):
             # Interpret the expression & Paint it into canvas
             # Perceive (only canvas)
             hidden_canvas = self.listener.perceive(canvas, turn, train=train)
-            # Self-reconstruction
-            if self.calc_reconstruction:
-                loss_recon = self.listener.reconstructor(canvas, hidden_canvas)
-                accum_loss_reconstruction += loss_recon
 
             # Interpret the expression with current situation (canvas)
             message_meaning = self.listener.listen(
@@ -155,7 +138,11 @@ class World(chainer.Chain):
             p_dists_history.append(p_dists)
 
             # Calculate communication loss
-            raw_loss = F.sum((canvas - image) ** 2, axis=1)
+            raw_loss = (canvas - image) ** 2
+            second = reduce(lambda a, b: a * b, raw_loss.shape[1:])
+            raw_loss = F.reshape(raw_loss,
+                                 (raw_loss.shape[0], second))
+            raw_loss = F.sum(raw_loss, axis=1)
             raw_loss_list.append(raw_loss)
 
             loss = F.sum(raw_loss) / image.data.size
@@ -173,6 +160,7 @@ class World(chainer.Chain):
         reward = (1. - raw_loss_list[-1]).data
         baseline = self.baseline if not self.baseline is None \
             else self.xp.mean(reward)
+
         reinforce = F.sum(sum(log_prob_history) / n_turn *
                           (reward - baseline)) / reward.size
         self.baseline = self.baseline * 0.95 + self.xp.mean(reward) * 0.05 \
@@ -181,11 +169,6 @@ class World(chainer.Chain):
         accum_reinforce = reinforce
         report({'reward': accum_reinforce}, self)
         sub_accum_loss -= accum_reinforce * 0.00001
-
-        # Add loss of self-reconstruction
-        if self.calc_reconstruction:
-            sub_accum_loss += accum_loss_reconstruction * 0.001
-            report({'recon': accum_loss_reconstruction}, self)
 
         # Add loss at full turn
         if self.calc_full_turn:
@@ -265,7 +248,7 @@ class World(chainer.Chain):
 
         # Initialize canvas of Listener
         canvas = chainer.Variable(
-            self.xp.ones(shape, np.float32), volatile='auto')
+            self.xp.zeros(shape, np.float32), volatile='auto')
 
         for turn in range(n_turn):
             # [Listener]
@@ -326,7 +309,7 @@ class World(chainer.Chain):
             turn = 0
             # Initialize canvas of Listener
             canvas = chainer.Variable(
-                self.xp.ones(shape, np.float32), volatile='off')
+                self.xp.zeros(shape, np.float32), volatile='off')
 
             # [Speaker]
             # Express the image x compared to canvas
