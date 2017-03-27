@@ -25,9 +25,14 @@ class World(chainer.Chain):
                  cifar=True):
 
         if cifar:
-            sensor_for_listener = Sensor.ConvSensor(n_middle)
-            sensor_for_speaker = Sensor.ConvSensor(n_middle)
-            painter = Painter.DeconvPainter(n_middle)
+            #sensor_for_listener = Sensor.ConvSensor(n_middle)
+            #sensor_for_speaker = Sensor.ConvSensor(n_middle)
+            sensor_for_listener = Sensor.NaiveFCSensor(
+                n_in, n_middle, n_turn, drop_ratio)
+            sensor_for_speaker = Sensor.NaiveFCSensor(
+                n_in, n_middle, n_turn + 1, drop_ratio)
+            #painter = Painter.DeconvPainter(n_middle)
+            painter = Painter.NaiveFCColorPainter(n_in, n_middle, n_turn)
         else:
             sensor_for_listener = Sensor.NaiveFCSensor(
                 n_in, n_middle, n_turn, drop_ratio)
@@ -67,6 +72,8 @@ class World(chainer.Chain):
         self.calc_importance_loss = co_importance
 
         self.baseline = None
+
+        self.zuru = False
 
     def __call__(self, image, generate=False):
         n_turn, n_word = self.n_turn, self.n_word
@@ -116,11 +123,13 @@ class World(chainer.Chain):
             message_meaning = self.listener.listen(
                 sampled_word_idx_seq, turn, train=train)
 
-            # ZURU
-            # message_meaning += thought
-
             concept = self.listener.think(
                 hidden_canvas, message_meaning, turn, train=train)
+
+            # ZURU
+            if self.zuru:
+                #concept = F.dropout(thought, ratio=0.5, train=train)
+                concept = thought
 
             # Paint
             # canvas = self.listener.painter(
@@ -139,6 +148,7 @@ class World(chainer.Chain):
 
             # Calculate communication loss
             raw_loss = (canvas - image) ** 2
+
             second = reduce(lambda a, b: a * b, raw_loss.shape[1:])
             raw_loss = F.reshape(raw_loss,
                                  (raw_loss.shape[0], second))
@@ -262,6 +272,10 @@ class World(chainer.Chain):
 
             concept = self.listener.think(
                 hidden_canvas, message_meaning, turn, train=train)
+
+            # ZURU
+            if self.zuru:
+                concept = thought
 
             # Paint
             # canvas = self.listener.painter(

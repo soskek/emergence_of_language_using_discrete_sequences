@@ -81,6 +81,7 @@ class NaiveFCSensor(chainer.Chain):
 
 def add_noise(h, test, sigma=0.1):
     xp = cuda.get_array_module(h.data)
+    return h
     if test:
         return h
     else:
