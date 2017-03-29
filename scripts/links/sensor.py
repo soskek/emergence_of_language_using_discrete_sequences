@@ -79,6 +79,43 @@ class NaiveFCSensor(chainer.Chain):
         return h3
 
 
+class EricFCSensor(chainer.Chain):
+
+    def __init__(self, n_in, middle_units, n_units, n_turn, drop_ratio=0.):
+        super(EricFCSensor, self).__init__(
+            l1=L.Linear(n_in, middle_units),
+            #l2=L.Linear(middle_units, n_units),
+            l2=L.Linear(middle_units, middle_units),
+            #l3=L.Linear(middle_units, n_units),
+            l3=L.Linear(middle_units, middle_units),
+            # bn=L.BatchNormalization(n_units),
+            bn1=L.BatchNormalization(middle_units, use_cudnn=False),
+            bn2=L.BatchNormalization(middle_units, use_cudnn=False),
+            bn3=L.BatchNormalization(n_units, use_cudnn=False),
+
+            act1=L.PReLU(middle_units),
+            act2=L.PReLU(middle_units),
+        )
+        self.drop_ratio = drop_ratio
+
+    def __call__(self, x, turn, train=True):
+        h = self.l1(x)
+        #h = self.bn1(h, test=not train)
+        #h = self.act1(h)
+        h = F.tanh(h)
+        #h = F.dropout(h, ratio=self.drop_ratio, train=train)
+        #h = self.l2(h)
+        #h = self.bn2(h, test=not train)
+        #h = self.act2(h)
+        #h = F.dropout(h, ratio=self.drop_ratio, train=train)
+        #h = self.l3(h)
+
+        #h = self.bn3(h, test=not train)
+        #h = F.leaky_relu(h)
+        #h = F.dropout(h, ratio=self.drop_ratio, train=train)
+        return h
+
+
 def add_noise(h, test, sigma=0.1):
     xp = cuda.get_array_module(h.data)
     return h

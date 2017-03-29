@@ -25,34 +25,56 @@ class World(chainer.Chain):
                  cifar=True):
 
         if cifar:
-            #sensor_for_listener = Sensor.ConvSensor(n_middle)
-            #sensor_for_speaker = Sensor.ConvSensor(n_middle)
+            # sensor_for_listener = Sensor.ConvSensor(n_middle)
+            # sensor_for_speaker = Sensor.ConvSensor(n_middle)
             sensor_for_listener = Sensor.NaiveFCSensor(
                 n_in, n_middle, n_turn, drop_ratio)
             sensor_for_speaker = Sensor.NaiveFCSensor(
                 n_in, n_middle, n_turn + 1, drop_ratio)
-            #painter = Painter.DeconvPainter(n_middle)
+            # painter = Painter.DeconvPainter(n_middle)
             painter = Painter.NaiveFCColorPainter(n_in, n_middle, n_turn)
         else:
-            sensor_for_listener = Sensor.NaiveFCSensor(
-                n_in, n_middle, n_turn, drop_ratio)
-            sensor_for_speaker = Sensor.NaiveFCSensor(
-                n_in, n_middle, n_turn + 1, drop_ratio)
-            painter = Painter.NaiveFCPainter(n_in, n_middle, n_turn)
+            eric_sensor = True
+            if eric_sensor:
+                sensor_for_listener = Sensor.EricFCSensor(
+                    n_in, n_middle, n_units, n_turn, drop_ratio)
+                sensor_for_speaker = Sensor.EricFCSensor(
+                    n_in, n_middle, n_units, n_turn, drop_ratio)
+            else:
+                sensor_for_listener = Sensor.NaiveFCSensor(
+                    n_in, n_middle, n_turn, drop_ratio)
+                sensor_for_speaker = Sensor.NaiveFCSensor(
+                    n_in, n_middle, n_turn + 1, drop_ratio)
+            #painter = Painter.NaiveFCPainter(n_in, n_middle, n_turn)
+            painter = Painter.EricFCPainter(n_in, n_middle, n_units, n_turn)
 
         language_for_listener = Language.NaiveLanguage(n_units, n_vocab, n_turn,
                                                        listener=True)
         language_for_speaker = Language.NaiveLanguage(n_units, n_vocab, n_turn,
                                                       speaker=True)
 
+        """
         listener = Listener.NaiveListener(n_in, n_middle, n_units, n_turn,
                                           sensor_for_listener,
                                           language_for_listener,
                                           painter)
 
+        """
+        listener = Listener.EricListener(n_in, n_middle, n_units, n_turn,
+                                         sensor_for_listener,
+                                         language_for_listener,
+                                         painter)
+        #"""
+        """
         speaker = Speaker.NaiveSpeaker(n_in, n_middle, n_units, n_turn,
                                        sensor_for_speaker,
                                        language_for_speaker)
+        """
+        speaker = Speaker.EricSpeaker(n_in, n_middle, n_units, n_turn,
+                                      sensor_for_speaker,
+                                      language_for_speaker)
+
+        assert(speaker.language is not listener.language)
 
         super(World, self).__init__(
             listener=listener,
@@ -128,7 +150,7 @@ class World(chainer.Chain):
 
             # ZURU
             if self.zuru:
-                #concept = F.dropout(thought, ratio=0.5, train=train)
+                # concept = F.dropout(thought, ratio=0.5, train=train)
                 concept = thought
 
             # Paint
@@ -167,18 +189,22 @@ class World(chainer.Chain):
         report({'loss': accum_loss}, self)
 
         # Add (minus) reinforce
-        reward = (1. - raw_loss_list[-1]).data
+        #reward = (1. - raw_loss_list[-1]).data
+        reward = (- raw_loss_list[-1]).data
         baseline = self.baseline if not self.baseline is None \
             else self.xp.mean(reward)
 
         reinforce = F.sum(sum(log_prob_history) / n_turn *
                           (reward - baseline)) / reward.size
-        self.baseline = self.baseline * 0.95 + self.xp.mean(reward) * 0.05 \
+        self.baseline = self.baseline * 0.99 + self.xp.mean(reward) * 0.01 \
             if not self.baseline is None \
             else self.xp.mean(reward)
         accum_reinforce = reinforce
         report({'reward': accum_reinforce}, self)
-        sub_accum_loss -= accum_reinforce * 0.00001
+        #sub_accum_loss -= accum_reinforce * 0.00001
+        #sub_accum_loss -= accum_reinforce * 100.
+        #sub_accum_loss -= accum_reinforce * 0.1
+        sub_accum_loss -= accum_reinforce * 1.
 
         # Add loss at full turn
         if self.calc_full_turn:

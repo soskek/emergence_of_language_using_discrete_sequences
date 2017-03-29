@@ -72,3 +72,55 @@ class NaiveListener(chainer.Chain):
     def perceive(self, image, turn, train=True):
         hidden_image = self.sensor(image, turn, train=train)
         return hidden_image
+
+
+class EricListener(chainer.Chain):
+
+    def __init__(self, n_in, n_middle, n_units, n_turn,
+                 sensor, language, painter, reconstructor=None):
+        super(EricListener, self).__init__(
+            sensor=sensor,
+            painter=painter,
+            language=language,
+            l1=L.Linear(n_units, n_middle),
+            act1=L.PReLU(n_middle),
+            l2=L.Linear(n_middle, n_middle),
+            act2=L.PReLU(n_middle),
+            l3=L.Linear(n_middle, n_middle),
+            act3=L.PReLU(n_middle),
+            bn1=L.BatchNormalization(n_middle, use_cudnn=False),
+        )
+
+        if reconstructor:
+            self.add_link('reconstructor', reconstructor)
+        else:
+            self.reconstructor = None
+
+    def __call__(self, hidden_canvas, message_sentence, turn, train=True):
+        return self.think(hidden_canvas, message_sentence,
+                          turn=turn, train=train)
+
+    def paint(self, concept, turn, train=True):
+        return self.painter(concept, turn, train=train)
+
+    def think(self, hidden_canvas, message_meaning, turn, train=True):
+        concept = self.l1(message_meaning)
+        #concept = self.bn1(concept, test=not train)
+        #concept = self.act1(concept)
+        concept = F.tanh(concept)
+        """
+        concept = self.l2(concept)
+        concept = self.act2(concept)
+        concept = self.l3(concept)
+        concept = self.act3(concept)
+        """
+        return concept
+
+    def listen(self, message_sentence, turn, train=True):
+        message_meaning = self.language.interpret_sentence(
+            message_sentence, train=train)
+        return message_meaning
+
+    def perceive(self, image, turn, train=True):
+        hidden_image = self.sensor(image, turn, train=train)
+        return hidden_image

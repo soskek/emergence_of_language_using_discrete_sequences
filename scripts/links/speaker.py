@@ -74,3 +74,43 @@ class NaiveSpeaker(chainer.Chain):
         loss = self.language.decode_thought_loss(
             thought, word_idx_seq, n_word, train=train)
         return loss
+
+
+class EricSpeaker(chainer.Chain):
+
+    def __init__(self, n_in, n_middle, n_units, n_turn,
+                 sensor, language, reconstructor=None):
+        super(EricSpeaker, self).__init__(
+            sensor=sensor,
+            language=language,
+            l1=L.Linear(n_middle, n_units),
+            bn1=L.BatchNormalization(n_units),
+        )
+        if reconstructor:
+            self.add_link('reconstructor', reconstructor)
+        else:
+            self.reconstructor = None
+        self.n_turn = n_turn
+
+    def perceive(self, image, turn, train=True):
+        hidden_image = self.sensor(image, turn, train=train)
+        return hidden_image
+
+    def think(self, hidden_image, hidden_canvas, turn, train=True):
+        thought = self.l1(hidden_image)
+        thought = self.bn1(thought, test=not train)
+        thought = F.tanh(thought)
+        return thought
+
+    def __call__(self, hidden_image, hidden_canvas, turn, train=True):
+        return self.think(hidden_image, hidden_canvas, turn, train=train)
+
+    def speak(self, thought, n_word=3, train=True):
+        sampled_word_idx_seq, total_log_probability, p_dists = \
+            self.language.decode_thought(thought, n_word, train=train)
+        return sampled_word_idx_seq, total_log_probability, p_dists
+
+    def speak_loss(self, thought, word_idx_seq, n_word=3, train=True):
+        loss = self.language.decode_thought_loss(
+            thought, word_idx_seq, n_word, train=train)
+        return loss

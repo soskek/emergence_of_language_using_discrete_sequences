@@ -39,6 +39,43 @@ class NaiveFCPainter(chainer.Chain):
         return plus_draw * gate_draw
 
 
+class EricFCPainter(chainer.Chain):
+
+    def __init__(self, n_in, n_middle, n_units, n_turn, drop_ratio=0.0):
+        super(EricFCPainter, self).__init__(
+            #l1=L.Linear(n_units, n_middle),
+            l1=L.Linear(n_middle, n_middle),
+            l2=L.Linear(n_middle, n_middle),
+            l3=L.Linear(n_middle, n_in),
+
+            bn1=L.BatchNormalization(n_middle, use_cudnn=False),
+            bn2=L.BatchNormalization(n_middle, use_cudnn=False),
+            bn3=L.BatchNormalization(n_in, use_cudnn=False),
+
+            act1=L.PReLU(n_middle),
+            act2=L.PReLU(n_middle),
+        )
+        self.drop_ratio = drop_ratio
+        if n_turn >= 2:
+            self.add_link('lo_tanh', L.Linear(n_middle, n_in))
+            self.add_link('bn_lo', L.BatchNormalization(n_in, use_cudnn=False))
+
+    def __call__(self, x, turn, train=True):
+        h = x
+        #h = self.l1(x)
+        #h = self.bn1(h, test=not train)
+        #h = self.act1(h)
+        #h = self.l2(h)
+        #h = self.bn2(h, test=not train)
+        #h = self.act2(h)
+        h_out = self.l3(h)
+        #h_out = self.bn3(h_out, test=not train)
+        h_out = F.sigmoid(h_out)
+        if hasattr(self, 'lo_tanh'):
+            h_out = h_out * F.tanh(self.bn_lo(self.lo_tanh(h), test=not train))
+        return h_out
+
+
 class NaiveFCColorPainter(chainer.Chain):
 
     def __init__(self, n_in, n_middle, n_turn):
