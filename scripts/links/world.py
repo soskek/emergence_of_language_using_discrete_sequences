@@ -83,6 +83,7 @@ class World(chainer.Chain):
 
         self.n_turn = n_turn
         self.n_word = n_word
+        self.n_vocab = n_vocab
         self.drop_ratio = drop_ratio
 
         self.train = True
