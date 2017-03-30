@@ -101,7 +101,7 @@ def main():
     parser.add_argument('--resume', '-r', default='',
                         help='Resume the training from snapshot')
 
-    parser.add_argument('--cifar', type=int, default=1,
+    parser.add_argument('--cifar', type=int, default=0,
                         help='Cifar/MNIST')
 
     parser.add_argument('--unit', '-u', type=int, default=64,
