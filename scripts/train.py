@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 import argparse
+import copy
 
 import matplotlib
 matplotlib.use('Agg')
@@ -157,7 +158,10 @@ def main():
             co_orthogonal=args.co_orthogonal, cifar=args.cifar)
         # Load the MNIST dataset
         train, test = chainer.datasets.get_mnist(withlabel=False)
+        train, valid = chainer.datasets.split_dataset_random(
+            train, 50000, seed=777)
         print('# of train data:', len(train))
+        print('# of valid data:', len(valid))
         print('# of test data:', len(test))
 
     if args.gpu >= 0:
@@ -202,11 +206,14 @@ def main():
             del loss
 
         train_loss = '{:.6f}'.format(float(accum_loss_data / n_iters))
-        mean_valid_loss_data = evaluate(model, test, batchsize, args.gpu)
+        mean_valid_loss_data = evaluate(model, valid, batchsize, args.gpu)
 
         if mean_valid_loss_data < best_valid:
             best_valid = mean_valid_loss_data
-            best_keep = 0
+            best_model = copy.deepcopy(model)
+            best_epoch = i_epoch
+
+            n_best_keep = 0
             S.save_npz(args.out + 'saved_model.model', model)
             valid_loss = '\t\t{:.6f} *'.format(float(mean_valid_loss_data))
 
@@ -223,29 +230,32 @@ def main():
                 model, epoch=i_epoch, out=args.out, filename='checkinc',
                 printer=(i_epoch == args.epoch - 1), cifar=args.cifar)
         else:
-            best_keep += 1
+            n_best_keep += 1
             valid_loss = '{:.6f}'.format(float(mean_valid_loss_data))
 
         print('Epoch', i_epoch,
               '\ttrain: {}\tvalid: {}'.format(train_loss, valid_loss))
 
-        if best_keep >= 20:
+        if n_best_keep >= 20:
             break
 
     #S.save_npz(args.out + 'saved_model.model', model)
-    print('Finish at {}/{} epoch'.format(i_epoch, args.epoch))
+    mean_test_loss_data = evaluate(best_model, test, batchsize, args.gpu)
+    print('TEST by model at', best_epoch, 'epoch.'
+          '\ttest: {:.6f}'.format(float(mean_test_loss_data)))
+    print('Finish at {}/{} epoch'.format(best_epoch, args.epoch))
 
 
-def evaluate(model, test, batchsize, gpu):
+def evaluate(model, dataset, batchsize, gpu):
 
     model.train = False
     accum_valid_loss_data = 0.
 
-    for i_iter in range(len(test) // batchsize + 1):
+    for i_iter in range(len(dataset) // batchsize + 1):
         ids = [i_iter * batchsize + idx for idx in range(batchsize)]
-        ids = [idx for idx in ids if idx < len(test)]
-        batch = [test[idx]
-                 for idx in ids if idx < len(test)]
+        ids = [idx for idx in ids if idx < len(dataset)]
+        batch = [dataset[idx]
+                 for idx in ids if idx < len(dataset)]
         if not batch:
             continue
         batch = chainer.Variable(
@@ -256,7 +266,7 @@ def evaluate(model, test, batchsize, gpu):
 
     model.train = True
 
-    return accum_valid_loss_data / len(test)
+    return accum_valid_loss_data / len(dataset)
 
 
 if __name__ == '__main__':
