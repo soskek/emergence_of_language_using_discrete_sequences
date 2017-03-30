@@ -2,271 +2,169 @@
 from __future__ import print_function
 import argparse
 import copy
+import os
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import chainer
-import chainer.functions as F
-import chainer.links as L
 import chainer.serializers as S
-from chainer import training
-from chainer.training import extensions
 from chainer.dataset.convert import concat_examples as convert
 
 # from links import communicator
-from links import world
+from links import coms
 
 import numpy as np
-
-try:
-    from tqdm import tqdm
-except:
-    tqdm = list
-
 import json
 
-from PIL import Image
 
-
-def save_images(x, filename, cifar=False):
+def save_images(x, filename):
     x = np.array(x.tolist(), np.float32)
     width = x.shape[0]
     fig, ax = plt.subplots(1, width, figsize=(width, 1))
     for ai, xi in zip(ax.ravel(), x):
         ai.set_axis_off()
-        if cifar:
-            # (3, 32, 32) -> (32, 32, 3)
-            ai.imshow(np.moveaxis(xi, 0, -1))
-        else:
-            ai.imshow(xi.reshape(28, 28), cmap='Greys_r')
-    plt.subplots_adjust(left=None, bottom=None, right=None, top=None,
-                        wspace=0.1, hspace=0.)
+        ai.imshow(xi.reshape(28, 28), cmap='Greys_r')
+    plt.subplots_adjust(
+        left=None, bottom=None, right=None, top=None, wspace=0.1, hspace=0.)
     fig.savefig(filename, bbox_inches='tight', pad=0.)
     plt.clf()
     plt.close('all')
 
 
-def generate(model, image_data, epoch=0, out='./',
-             filename='image', printer=False, cifar=False):
-    prev_train = model.train
-    model.train = False
-    sentence_history, log_prob_history, canvas_history = model(
-        image_data, generate=True)
-    model.train = prev_train
+def generate(model, image_data, epoch=0, out='./', filename='image'):
+    sentence, log_prob, canvas = model(image_data, generate=True, train=False)
 
     save_images(image_data.data, out + filename + '_TRUE.png')
-    for i in range(model.n_turn):
-        save_images(
-            canvas_history[i], out + filename + '_{}e_{}.png'.format(epoch, i))
-    sentence_log = [[[[int(word_batch[i]) for word_batch in word_batch_list],
-                      float(log_prob_batch[i])]
-                     for log_prob_batch, word_batch_list
-                     in zip(log_prob_history, sentence_history)]
-                    for i in range(image_data.shape[0])]
-    json_f = open(
-        out + 'message.' + filename + '{}e.json'.format(epoch), 'w')
-    json.dump(sentence_log, json_f)
+    save_images(canvas, out + filename + '_{}e.png'.format(epoch))
 
 
-def generate_by_message(model, sentence=None, epoch=0, out='./',
-                        filename='mimage', printer=False, cifar=False):
-    prev_train = model.train
-    model.train = False
-    if sentence is None:
-        sentence = np.fliplr(1 - np.tri(model.n_word, model.n_word + 1).T)
-        sentence = np.concatenate(
-            [sentence, np.fliplr(1 - np.tri(model.n_word, model.n_word))], axis=0)
-        sentence = [model.xp.array(word, np.int32)
-                    for word in sentence.T.tolist()]
-    shape = (len(sentence[0]), 32 * 32 * 2 if cifar else 784)
-    canvas_history = model.generate(sentence, shape)
-    model.train = prev_train
+def generate_by_template(model, epoch=0, out='./',
+                         filename='mimage'):
 
-    for i in range(model.n_turn):
-        save_images(
-            canvas_history[i], out + filename + '_{}e_{}.png'.format(epoch, i))
+    sentence = np.fliplr(1 - np.tri(model.n_word, model.n_word + 1).T)
+    sentence = np.concatenate(
+        [sentence, np.fliplr(1 - np.tri(model.n_word, model.n_word))], axis=0)
+    sentence = [model.xp.array(word, np.int32)
+                for word in sentence.T.tolist()]
+
+    canvas = model.generate_from_sentence(
+        sentence, shape=(len(sentence[0]), 784))
+
+    save_images(canvas, out + filename + '_{}e.png'.format(epoch))
+
+
+def evaluate(model, dataset, batchsize, gpu):
+    accum_valid_loss_data = 0.
+    dataset_iter = chainer.iterators.SerialIterator(
+        dataset, batchsize, repeat=False, shuffle=False)
+    dataset_iter.is_new_epoch = False
+    while not dataset_iter.is_new_epoch:
+        batch = chainer.Variable(
+            convert(dataset_iter.next(), device=gpu), volatile='auto')
+        valid_loss, valid_rein_loss = model(batch, train=False)
+        accum_valid_loss_data += valid_loss.data * batch.shape[0]
+    return accum_valid_loss_data / len(dataset)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Chainer example: MNIST')
-    parser.add_argument('--batchsize', '-b', type=int, default=256,
-                        help='Number of images in each mini-batch')
-    parser.add_argument('--epoch', '-e', type=int, default=15,
-                        help='Number of sweeps over the dataset to train')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--batchsize', '-b', type=int, default=512)
+    parser.add_argument('--epoch', '-e', type=int, default=200)
+    parser.add_argument('--unit', '-u', type=int, default=32)
+    parser.add_argument('--image-unit', '-i', type=int, default=256)
+    parser.add_argument('--vocab', '-v', type=int, default=2)
+    parser.add_argument('--word', '-w', type=int, default=8)
+
     parser.add_argument('--gpu', '-g', type=int, default=-1,
                         help='GPU ID (negative value indicates CPU)')
     parser.add_argument('--out', '-o', default='./result',
                         help='Directory to output the result')
-    parser.add_argument('--resume', '-r', default='',
-                        help='Resume the training from snapshot')
-
-    parser.add_argument('--cifar', type=int, default=0,
-                        help='Cifar/MNIST')
-
-    parser.add_argument('--unit', '-u', type=int, default=64,
-                        help='Number of units')
-    parser.add_argument('--image-unit', '-i', type=int, default=128,
-                        help='Number of middel units for image expression')
-
-    parser.add_argument('--co-importance', '-importance', '-imp',
-                        type=float, default=0.,
-                        help='Coef. of importance loss')
-    parser.add_argument('--co-orthogonal', '-orthogonal', '-ort',
-                        type=float, default=0.,
-                        help='Coef. of orthogonal loss')
-
-    parser.add_argument('--word', '-w', type=int, default=3,
-                        help='Number of words in a message')
-    parser.add_argument('--turn', '-t', type=int, default=3,
-                        help='Number of turns')
-    parser.add_argument('--vocab', '-v', type=int, default=32,
-                        help='Number of words in vocab')
-
-    parser.add_argument('--drop-ratio', '--dropout', type=float, default=0.1,
-                        help='dropout ratio')
 
     args = parser.parse_args()
-
     args.out = args.out.rstrip('/') + '/'
-
-    import json
     print(json.dumps(args.__dict__, indent=2))
+    if not os.path.isdir(args.out):
+        os.mkdir(args.out)
 
-    print('')
-
-    if args.cifar:
-        print('CIFAR')
-        model = world.World(
-            32 * 32 * 3, args.image_unit, args.unit,
-            n_vocab=args.vocab, n_word=args.word, n_turn=args.turn,
-            drop_ratio=args.drop_ratio, co_importance=args.co_importance,
-            co_orthogonal=args.co_orthogonal, cifar=args.cifar)
-        # Load the MNIST dataset
-        #train, test = chainer.datasets.get_cifar10(withlabel=False)
-        alldata = np.load('svhn_test') / 255
-        train, test = alldata[:25000], alldata[25000:]
-        print('# of train data:', len(train))
-        print('# of test data:', len(test))
-    else:
-        print('MNIST')
-        model = world.World(
-            28 * 28, args.image_unit, args.unit,
-            n_vocab=args.vocab, n_word=args.word, n_turn=args.turn,
-            drop_ratio=args.drop_ratio, co_importance=args.co_importance,
-            co_orthogonal=args.co_orthogonal, cifar=args.cifar)
-        # Load the MNIST dataset
-        train, test = chainer.datasets.get_mnist(withlabel=False)
-        train, valid = chainer.datasets.split_dataset_random(
-            train, 50000, seed=777)
-        print('# of train data:', len(train))
-        print('# of valid data:', len(valid))
-        print('# of test data:', len(test))
+    model = coms.World(
+        28 * 28, args.image_unit, args.unit,
+        n_vocab=args.vocab, n_word=args.word)
+    # Load the MNIST dataset
+    train, test = chainer.datasets.get_mnist(withlabel=False)
+    train, valid = chainer.datasets.split_dataset_random(
+        train, 50000, seed=777)
+    train_iter = chainer.iterators.SerialIterator(
+        train, args.batchsize)
+    print('# of train data:', len(train))
+    print('# of valid data:', len(valid))
+    print('# of test data:', len(test))
 
     if args.gpu >= 0:
-        chainer.cuda.get_device(args.gpu).use()  # Make a specified GPU current
-        model.to_gpu()  # Copy the model to the GPU
-
-    # Setup an optimizer
+        chainer.cuda.get_device(args.gpu).use()
+        model.to_gpu()
     optimizer = chainer.optimizers.Adam()
     optimizer.setup(model)
     optimizer.add_hook(chainer.optimizer.GradientClipping(1.))
-    # optimizer.add_hook(chainer.optimizer.WeightDecay(0.0001))
 
-    import os
-    if not os.path.isdir(args.out):
-        if os.path.exists(args.out):
-            print(args.out, 'exists as a file')
-            exit()
-        else:
-            os.mkdir(args.out)
-
-    batchsize = args.batchsize
-
-    log_report = extensions.LogReport()
+    n_iters = len(train) // args.batchsize
     best_valid = 10000000.
-    best_keep = 0
+    n_est_keep = 0
     print('start')
     for i_epoch in range(1, args.epoch + 1):
-        n_iters = len(train) // batchsize
-        permutation = np.random.permutation(len(train))
         accum_loss_data = 0.
-        for i_iter in range(n_iters):
-            ids = permutation[i_iter * batchsize:
-                              (i_iter + 1) * batchsize]
-            batch = [train[idx] for idx in ids]
+        accum_rein_loss_data = 0.
+        train_iter.is_new_epoch = False
+        while not train_iter.is_new_epoch:
             batch = chainer.Variable(
-                convert(batch, device=args.gpu), volatile='auto')
-            loss = model(batch)
+                convert(train_iter.next(), device=args.gpu), volatile='auto')
+            loss, rein_loss = model(batch)
             model.zerograds()
-            loss.backward()
+            (loss + rein_loss).backward()
             optimizer.update()
-            accum_loss_data += loss.data - model.sub_accum_loss
-            del loss
+            accum_loss_data += loss.data
+            accum_rein_loss_data += rein_loss.data
 
         train_loss = '{:.6f}'.format(float(accum_loss_data / n_iters))
-        mean_valid_loss_data = evaluate(model, valid, batchsize, args.gpu)
+        mean_valid_loss_data = evaluate(
+            model, valid, args.batchsize, args.gpu)
 
         if mean_valid_loss_data < best_valid:
+            valid_loss = '\t\t{:.6f} *'.format(float(mean_valid_loss_data))
+            S.save_npz(args.out + 'saved_model.model', model)
+
             best_valid = mean_valid_loss_data
             best_model = copy.deepcopy(model)
             best_epoch = i_epoch
-
-            n_best_keep = 0
-            S.save_npz(args.out + 'saved_model.model', model)
-            valid_loss = '\t\t{:.6f} *'.format(float(mean_valid_loss_data))
+            n_wins = 0
 
             batch = chainer.Variable(
                 convert(train[:50], device=args.gpu), volatile='auto')
-            generate(model, batch, epoch=i_epoch, out=args.out, filename='train',
-                     printer=(i_epoch == args.epoch - 1), cifar=args.cifar)
+            generate(model, batch, epoch=i_epoch,
+                     out=args.out, filename='train')
             batch = chainer.Variable(
                 convert(test[:50], device=args.gpu), volatile='auto')
-            generate(model, batch, epoch=i_epoch, out=args.out, filename='test',
-                     printer=(i_epoch == args.epoch - 1), cifar=args.cifar)
+            generate(model, batch, epoch=i_epoch,
+                     out=args.out, filename='test')
 
-            generate_by_message(
-                model, epoch=i_epoch, out=args.out, filename='checkinc',
-                printer=(i_epoch == args.epoch - 1), cifar=args.cifar)
+            generate_by_template(
+                model, epoch=i_epoch, out=args.out, filename='checkinc')
         else:
-            n_best_keep += 1
+            n_wins += 1
             valid_loss = '{:.6f}'.format(float(mean_valid_loss_data))
 
         print('Epoch', i_epoch,
               '\ttrain: {}\tvalid: {}'.format(train_loss, valid_loss))
 
-        if n_best_keep >= 20:
+        if n_wins >= 20:
             break
 
-    #S.save_npz(args.out + 'saved_model.model', model)
-    mean_test_loss_data = evaluate(best_model, test, batchsize, args.gpu)
+    mean_test_loss_data = evaluate(
+        best_model, test, args.batchsize, args.gpu)
     print('TEST by model at', best_epoch, 'epoch.'
           '\ttest: {:.6f}'.format(float(mean_test_loss_data)))
     print('Finish at {}/{} epoch'.format(best_epoch, args.epoch))
-
-
-def evaluate(model, dataset, batchsize, gpu):
-
-    model.train = False
-    accum_valid_loss_data = 0.
-
-    for i_iter in range(len(dataset) // batchsize + 1):
-        ids = [i_iter * batchsize + idx for idx in range(batchsize)]
-        ids = [idx for idx in ids if idx < len(dataset)]
-        batch = [dataset[idx]
-                 for idx in ids if idx < len(dataset)]
-        if not batch:
-            continue
-        batch = chainer.Variable(
-            convert(batch, device=gpu), volatile='auto')
-        valid_loss_data = model(batch).data
-        valid_loss_data -= model.sub_accum_loss
-        accum_valid_loss_data += valid_loss_data * len(ids)
-
-    model.train = True
-
-    return accum_valid_loss_data / len(dataset)
 
 
 if __name__ == '__main__':
