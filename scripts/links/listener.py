@@ -117,6 +117,7 @@ class EricListener(chainer.Chain):
         return concept
 
     def listen(self, message_sentence, turn, train=True):
+        #message_sentence = message_sentence[::-1]
         message_meaning = self.language.interpret_sentence(
             message_sentence, train=train)
         return message_meaning

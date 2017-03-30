@@ -241,6 +241,14 @@ class World(chainer.Chain):
             report({'ortho': orthogonal_loss}, self)
 
         # Add balancing vocabulary
+        concat_p = F.concat(sum(p_dists_history, []), axis=0)
+        p_mean = F.sum(concat_p, axis=0) / concat_p.shape[0]
+        report({'p_mean': p_mean}, self)  # is this meaningless?
+
+        perplexity = F.exp(F.sum(sum(log_prob_history)) /
+                           len(log_prob_history) / batchsize).data
+        report({'perplexity': perplexity}, self)
+
         if self.calc_importance_loss:
             def importance_regularizer(p):
                 importance = F.sum(p, axis=0)
@@ -251,12 +259,8 @@ class World(chainer.Chain):
                 cv = std_i / mean_i
                 return cv ** 2
 
-            concat_p = F.concat(sum(p_dists_history, []), axis=0)
             importance_loss = importance_regularizer(concat_p)
             sub_accum_loss += importance_loss * self.calc_importance_loss
-
-            p_mean = F.sum(concat_p, axis=0) / concat_p.shape[0]
-            report({'p_mean': p_mean}, self)
 
             report({'importance': importance_loss}, self)
 
