@@ -6,6 +6,8 @@ from chainer import cuda
 import chainer.functions as F
 import chainer.links as L
 
+import numpy as np
+
 
 class ImageEncoder(chainer.Chain):
 
@@ -101,7 +103,7 @@ class Language(chainer.Chain):
             else:
                 t = teaching_sentence[i]
                 log_probability = F.log(F.select_item(p_dist, t))
-                loss += F.sum(- log_p) / log_p.shape[0]
+                loss += F.sum(- log_probability) / log_probability.shape[0]
                 x_input = self.meanings(teaching_sentence[i])
         self.decoder.reset_state()
 
@@ -165,6 +167,7 @@ class World(chainer.Chain):
         self.n_vocab = n_vocab
         self.train = True
         self.baseline = None
+        self.image_upper_bound = None
 
     def __call__(self, image, generate=False, train=True):
         batchsize = image.shape[0]
@@ -198,39 +201,66 @@ class World(chainer.Chain):
         else:
             return loss, reinforce_loss
 
-    def generate_from_sentence(self, sentence, shape):
+    def generate_from_sentence(self, sentence):
         sentence_meaning = self.receiver.listen(sentence, train=False)
         canvas = self.receiver.paint(sentence_meaning, train=False)
         return F.clip(canvas, 0., 1.).data
 
-    def infer(self, sentence, shape):
-        batchsize = shape[0]
+    def learn_constraint(self, dataset):
+        upper_bound = self.xp.array(
+            np.percentile(np.array(dataset), 99., axis=0)).astype('f')
+        self.image_upper_bound = upper_bound
 
-        dream = chainer.Link(dream=shape)
+    def clip(self, image):
+        if self.image_upper_bound is not None:
+            upper_bound = self.xp.broadcast_to(
+                self.image_upper_bound[None, ], image.shape)
+        else:
+            upper_bound = 1.
+        return self.xp.clip(image, 0., upper_bound)
+
+    def infer_from_sentence(self, sentence):
+        batchsize = sentence[0].shape[0]
+
+        dream = chainer.Link(canvas=(batchsize, 784))
         if self._device_id is not None:
             dream.to_gpu(self._device_id)
             sentence = [self.xp.array(x) for x in sentence]
 
-        dream.dream.data[:] = 0.01
-        optimizer = chainer.optimizers.Adam(0.1)
+        optimizer = chainer.optimizers.Adam(0.01)
         optimizer.setup(dream)
-        optimizer.add_hook(optimizer.WeightDecay(0.01))
+        optimizer.add_hook(chainer.optimizer.WeightDecay(0.01))
+        # optimizer.add_hook(chainer.optimizer.Lasso(0.01))
 
-        n_iter = 200
-        for i_iter in range(n_iter):
-            dream.dream.data[:] = self.xp.clip(dream.dream.data, 0., 1.)
+        canvas = dream.canvas
+        canvas.data[:] = 0.1
+        max_n_iter = 1000
+        best_loss = 100000000.
+        best_iter = 0
+        n_wins = 0
+        for i_iter in range(max_n_iter):
+            canvas.data[:] = self.clip(canvas.data)
 
-            image = dream.dream * \
-                (self.xp.random.rand(*shape) > 0.01)  # add drop
+            #image = canvas * (self.xp.random.rand(*canvas.shape) > 0.05)
+            image = canvas
 
             hidden_image = self.sender.perceive(image, train=False)
             loss = self.sender.speak_loss(
                 hidden_image, sentence, n_word=self.n_word, train=False)
 
-            print(i_iter, loss.data)
             dream.zerograds()
             loss.backward()
             self.zerograds()
             optimizer.update()
 
-        return self.xp.clip(dream.dream.data, 0., 1.)
+            if loss.data < best_loss:
+                best_loss = loss.data
+                best_iter = i_iter
+                best_canvas = self.xp.array(canvas.data)
+                n_wins = 0
+            else:
+                n_wins += 1
+                if n_wins >= 20:
+                    break
+
+        return self.clip(best_canvas)

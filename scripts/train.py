@@ -40,19 +40,26 @@ def generate(model, image_data, epoch=0, out='./', filename='image'):
     save_images(canvas, out + filename + '_{}e.png'.format(epoch))
 
 
-def generate_by_template(model, epoch=0, out='./',
-                         filename='mimage'):
-
+def make_template_sentence(model):
     sentence = np.fliplr(1 - np.tri(model.n_word, model.n_word + 1).T)
     sentence = np.concatenate(
         [sentence, np.fliplr(1 - np.tri(model.n_word, model.n_word))], axis=0)
     sentence = [model.xp.array(word, np.int32)
                 for word in sentence.T.tolist()]
+    return sentence
 
-    canvas = model.generate_from_sentence(
-        sentence, shape=(len(sentence[0]), 784))
 
-    save_images(canvas, out + filename + '_{}e.png'.format(epoch))
+def generate_by_template(model, epoch=0, out='./',
+                         filename='mimage', agent_type='sender'):
+
+    sentence = make_template_sentence(model)
+
+    if agent_type == 'sender':
+        canvas = model.generate_from_sentence(sentence)
+        save_images(canvas, out + filename + '_{}e.png'.format(epoch))
+    else:
+        canvas = model.infer_from_sentence(sentence)
+        save_images(canvas, out + filename + '_{}e.png'.format(epoch))
 
 
 def evaluate(model, dataset, batchsize, gpu):
@@ -107,6 +114,8 @@ def main():
     optimizer = chainer.optimizers.Adam()
     optimizer.setup(model)
     optimizer.add_hook(chainer.optimizer.GradientClipping(1.))
+    # optimizer.add_hook(chainer.optimizer.WeightDecay(0.00001))
+    model.learn_constraint(train)
 
     n_iters = len(train) // args.batchsize
     best_valid = 10000000.
@@ -147,12 +156,16 @@ def main():
                 convert(test[:50], device=args.gpu), volatile='auto')
             generate(model, batch, epoch=i_epoch,
                      out=args.out, filename='test')
-
-            generate_by_template(
-                model, epoch=i_epoch, out=args.out, filename='checkinc')
         else:
             n_wins += 1
             valid_loss = '{:.6f}'.format(float(mean_valid_loss_data))
+
+        generate_by_template(
+            model, epoch=i_epoch, out=args.out,
+            filename='rec', agent_type='receiver')
+        generate_by_template(
+            model, epoch=i_epoch, out=args.out,
+            filename='sen', agent_type='sender')
 
         print('Epoch', i_epoch,
               '\ttrain: {}\tvalid: {}'.format(train_loss, valid_loss))
