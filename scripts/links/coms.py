@@ -16,10 +16,19 @@ class ImageEncoder(chainer.Chain):
             l1=L.Linear(n_in, n_middle),
             l2=L.Linear(n_middle, n_units),
             bn=L.BatchNormalization(n_units, use_cudnn=False))
+        self.add_link('act1', L.PReLU(n_middle))
 
     def __call__(self, x, train=True):
+        #"""
         h = self.l2(F.tanh(self.l1(x)))
+        #h = self.l2(F.dropout(F.tanh(self.l1(x)), ratio=0.1, train=train))
         h = F.tanh(self.bn(h, test=not train))
+        #"""
+        """
+        #h = self.l2(F.dropout(self.act1(self.l1(x)), ratio=0.1, train=train))
+        h = self.l2(self.act1(self.l1(x)))
+        h = F.tanh(self.bn(h, test=not train))
+        """
         return h
 
 
@@ -208,7 +217,7 @@ class World(chainer.Chain):
 
     def learn_constraint(self, dataset):
         upper_bound = self.xp.array(
-            np.percentile(np.array(dataset), 99., axis=0)).astype('f')
+            np.percentile(np.array(dataset), 99.9, axis=0)).astype('f')
         self.image_upper_bound = upper_bound
 
     def clip(self, image):
@@ -219,6 +228,12 @@ class World(chainer.Chain):
             upper_bound = 1.
         return self.xp.clip(image, 0., upper_bound)
 
+    def normalize(self, image, ink_ratio=0.3):
+        sum_ink = self.xp.sum(image, axis=1) / image.shape[1] + 1e-6
+        exceed = (sum_ink > ink_ratio)
+        coef = (1 - exceed) + exceed / sum_ink * ink_ratio
+        return image * coef[:, None]
+
     def infer_from_sentence(self, sentence):
         batchsize = sentence[0].shape[0]
 
@@ -227,21 +242,22 @@ class World(chainer.Chain):
             dream.to_gpu(self._device_id)
             sentence = [self.xp.array(x) for x in sentence]
 
-        optimizer = chainer.optimizers.Adam(0.01)
+        optimizer = chainer.optimizers.Adam(0.1)
         optimizer.setup(dream)
-        optimizer.add_hook(chainer.optimizer.WeightDecay(0.01))
+        optimizer.add_hook(chainer.optimizer.WeightDecay(0.001))
         # optimizer.add_hook(chainer.optimizer.Lasso(0.01))
 
         canvas = dream.canvas
-        canvas.data[:] = 0.1
-        max_n_iter = 1000
+        canvas.data[:] = 0.01
+        max_n_iter = 200
         best_loss = 100000000.
         best_iter = 0
         n_wins = 0
         for i_iter in range(max_n_iter):
             canvas.data[:] = self.clip(canvas.data)
+            canvas.data[:] = self.normalize(canvas.data)
 
-            #image = canvas * (self.xp.random.rand(*canvas.shape) > 0.05)
+            #image = canvas * (self.xp.random.uniform(size=canvas.shape) > 0.1)
             image = canvas
 
             hidden_image = self.sender.perceive(image, train=False)
@@ -263,4 +279,4 @@ class World(chainer.Chain):
                 if n_wins >= 20:
                     break
 
-        return self.clip(best_canvas)
+        return self.clip(self.normalize(best_canvas))

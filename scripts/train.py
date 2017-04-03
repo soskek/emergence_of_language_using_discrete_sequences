@@ -57,9 +57,16 @@ def generate_by_template(model, epoch=0, out='./',
     if agent_type == 'sender':
         canvas = model.generate_from_sentence(sentence)
         save_images(canvas, out + filename + '_{}e.png'.format(epoch))
-    else:
+    elif agent_type == 'receiver':
         canvas = model.infer_from_sentence(sentence)
         save_images(canvas, out + filename + '_{}e.png'.format(epoch))
+    elif agent_type == 'both':
+        canvas = model.generate_from_sentence(sentence)
+        save_images(canvas, out + filename + '_{}e_s.png'.format(epoch))
+        canvas = model.infer_from_sentence(sentence)
+        save_images(canvas, out + filename + '_{}e_r.png'.format(epoch))
+    else:
+        print('Invalid type.')
 
 
 def evaluate(model, dataset, batchsize, gpu):
@@ -115,6 +122,8 @@ def main():
     optimizer.setup(model)
     optimizer.add_hook(chainer.optimizer.GradientClipping(1.))
     # optimizer.add_hook(chainer.optimizer.WeightDecay(0.00001))
+    # optimizer.add_hook(chainer.optimizer.WeightDecay(0.001))
+    # optimizer.add_hook(chainer.optimizer.WeightDecay(0.0001))
     model.learn_constraint(train)
 
     n_iters = len(train) // args.batchsize
@@ -162,10 +171,7 @@ def main():
 
         generate_by_template(
             model, epoch=i_epoch, out=args.out,
-            filename='rec', agent_type='receiver')
-        generate_by_template(
-            model, epoch=i_epoch, out=args.out,
-            filename='sen', agent_type='sender')
+            filename='lang', agent_type='both')
 
         print('Epoch', i_epoch,
               '\ttrain: {}\tvalid: {}'.format(train_loss, valid_loss))
