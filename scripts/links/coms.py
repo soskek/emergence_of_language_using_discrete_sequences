@@ -14,21 +14,41 @@ class ImageEncoder(chainer.Chain):
     def __init__(self, n_in, n_middle, n_units):
         super(ImageEncoder, self).__init__(
             l1=L.Linear(n_in, n_middle),
+            lm=L.Linear(n_middle, n_middle),
+            lm2=L.Linear(n_middle, n_middle),
+            lm3=L.Linear(n_middle, n_middle),
             l2=L.Linear(n_middle, n_units),
-            bn=L.BatchNormalization(n_units, use_cudnn=False))
-        self.add_link('act1', L.PReLU(n_middle))
+            bn=L.BatchNormalization(n_units, use_cudnn=False),
+            act1=L.PReLU(n_middle),
+            act2=L.PReLU(n_middle),
+            act3=L.PReLU(n_middle),
+            act4=L.PReLU(n_middle),
+            bn1=L.BatchNormalization(n_middle, use_cudnn=False),
+            bn2=L.BatchNormalization(n_middle, use_cudnn=False),
+            bn3=L.BatchNormalization(n_middle, use_cudnn=False),
+            bn4=L.BatchNormalization(n_middle, use_cudnn=False),
+        )
+        #self.act1 = F.tanh
+        #self.act2 = F.tanh
 
     def __call__(self, x, train=True):
-        #"""
-        h = self.l2(F.tanh(self.l1(x)))
-        #h = self.l2(F.dropout(F.tanh(self.l1(x)), ratio=0.1, train=train))
-        h = F.tanh(self.bn(h, test=not train))
-        #"""
-        """
-        #h = self.l2(F.dropout(self.act1(self.l1(x)), ratio=0.1, train=train))
-        h = self.l2(self.act1(self.l1(x)))
-        h = F.tanh(self.bn(h, test=not train))
-        """
+        if train:
+            x = F.where(self.xp.random.rand(*x.shape) < 0.9,
+                        x, self.xp.ones(x.shape, np.float32))
+            # x, (self.xp.random.rand(*x.shape) < 0.5).astype('f'))
+        x = F.dropout(x, ratio=0.1, train=train)
+        h = F.dropout(
+            self.act1(self.bn1(self.l1(x), test=not train)), ratio=0.1, train=train)
+
+        h = F.dropout(
+            self.act2(self.bn2(self.lm(h), test=not train)), ratio=0.1, train=train)
+        h = F.dropout(
+            self.act3(self.bn3(self.lm2(h), test=not train)), ratio=0.1, train=train)
+        h = F.dropout(
+            self.act4(self.bn4(self.lm3(h), test=not train)), ratio=0.1, train=train)
+        #h = F.dropout(self.act4(self.lm3(h)), ratio=0.1, train=train)
+
+        h = F.tanh(self.bn(self.l2(h), test=not train))
         return h
 
 
@@ -217,18 +237,19 @@ class World(chainer.Chain):
 
     def learn_constraint(self, dataset):
         upper_bound = self.xp.array(
-            np.percentile(np.array(dataset), 99.9, axis=0)).astype('f')
+            np.percentile(np.array(dataset), 99., axis=0)).astype('f')
         self.image_upper_bound = upper_bound
 
-    def clip(self, image):
-        if self.image_upper_bound is not None:
+    def clip(self, image, default=False):
+        # return self.xp.clip(image, 0., 1.)
+        if not default and self.image_upper_bound is not None:
             upper_bound = self.xp.broadcast_to(
                 self.image_upper_bound[None, ], image.shape)
         else:
             upper_bound = 1.
         return self.xp.clip(image, 0., upper_bound)
 
-    def normalize(self, image, ink_ratio=0.3):
+    def normalize(self, image, ink_ratio=0.2):
         sum_ink = self.xp.sum(image, axis=1) / image.shape[1] + 1e-6
         exceed = (sum_ink > ink_ratio)
         coef = (1 - exceed) + exceed / sum_ink * ink_ratio
@@ -243,22 +264,29 @@ class World(chainer.Chain):
             sentence = [self.xp.array(x) for x in sentence]
 
         optimizer = chainer.optimizers.Adam(0.1)
+        #optimizer = chainer.optimizers.SGD(0.01)
+        #optimizer = chainer.optimizers.SGD(1.)
         optimizer.setup(dream)
-        optimizer.add_hook(chainer.optimizer.WeightDecay(0.001))
-        # optimizer.add_hook(chainer.optimizer.Lasso(0.01))
+        optimizer.add_hook(chainer.optimizer.WeightDecay(0.01))
+        # optimizer.add_hook(chainer.optimizer.WeightDecay(0.01))
+        # optimizer.add_hook(chainer.optimizer.WeightDecay(0.001))
+        # optimizer.add_hook(chainer.optimizer.WeightDecay(0.0001))
 
         canvas = dream.canvas
         canvas.data[:] = 0.01
-        max_n_iter = 200
-        best_loss = 100000000.
+        #max_n_iter = 100
+        max_n_iter = 100
+        best_loss = float('inf')
         best_iter = 0
         n_wins = 0
         for i_iter in range(max_n_iter):
-            canvas.data[:] = self.clip(canvas.data)
-            canvas.data[:] = self.normalize(canvas.data)
+            #canvas.data[:] += self.xp.random.normal(0., 0.01, canvas.shape)
+            canvas.data[:] = self.clip(canvas.data, default=True)
+            #canvas.data[:] = self.normalize(canvas.data)
 
-            #image = canvas * (self.xp.random.uniform(size=canvas.shape) > 0.1)
-            image = canvas
+            image = canvas * (self.xp.random.rand(*canvas.shape) > 0.1)
+            #image = canvas
+            #image = F.dropout(canvas, ratio=0.1, train=True)
 
             hidden_image = self.sender.perceive(image, train=False)
             loss = self.sender.speak_loss(
@@ -269,7 +297,7 @@ class World(chainer.Chain):
             self.zerograds()
             optimizer.update()
 
-            if loss.data < best_loss:
+            if loss.data < best_loss or best_iter == 0:
                 best_loss = loss.data
                 best_iter = i_iter
                 best_canvas = self.xp.array(canvas.data)
@@ -279,4 +307,5 @@ class World(chainer.Chain):
                 if n_wins >= 20:
                     break
 
-        return self.clip(self.normalize(best_canvas))
+        return self.clip(best_canvas)
+        # return self.clip(self.normalize(best_canvas))

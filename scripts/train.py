@@ -1,7 +1,8 @@
-#!/usr/bin/env python
+# !/usr/bin/env python
 from __future__ import print_function
 import argparse
 import copy
+import itertools
 import os
 
 import matplotlib
@@ -17,18 +18,51 @@ from links import coms
 
 import numpy as np
 import json
+from PIL import Image, ImageDraw, ImageFont
 
 
-def save_images(x, filename):
+def get_cm(color):
+    if color.startswith('red'):
+        cm = 'Reds'
+    elif color.startswith('blue'):
+        cm = 'Blues'
+    else:
+        cm = 'Greys'
+    if color.endswith('_r'):
+        cm += '_r'
+    return cm
+
+
+def save_images(x, filename, shape=None, color='gray_r', alpha=1.,
+                binary=None, cutoff=None, scale=True, interpolation=None):
     x = np.array(x.tolist(), np.float32)
-    width = x.shape[0]
-    fig, ax = plt.subplots(1, width, figsize=(width, 1))
-    for ai, xi in zip(ax.ravel(), x):
+    cm = get_cm(color)
+    if shape is None:
+        width = x.shape[0]
+        fig, ax = plt.subplots(1, width, figsize=(width, 1))
+    else:
+        fig, ax = plt.subplots(
+            shape[0], shape[1], figsize=tuple(reversed(shape)))
+    for i, (ai, xi) in enumerate(zip(ax.ravel(), x)):
         ai.set_axis_off()
-        ai.imshow(xi.reshape(28, 28), cmap='Greys_r')
+        if binary is not None:
+            xi = (xi > binary).astype('f')
+        if cutoff is not None:
+            if cutoff == 'mean':
+                xi = xi * (xi > np.mean(xi))
+            else:
+                xi = xi * (xi > cutoff)
+        if scale:
+            ai.imshow(xi.reshape(28, 28), cmap=cm, alpha=alpha,
+                      interpolation=interpolation)
+        else:
+            ai.imshow(xi.reshape(28, 28), cmap=cm, alpha=alpha,
+                      vmin=0., vmax=1., interpolation=interpolation)
+
     plt.subplots_adjust(
-        left=None, bottom=None, right=None, top=None, wspace=0.1, hspace=0.)
-    fig.savefig(filename, bbox_inches='tight', pad=0.)
+        left=None, bottom=None, right=None, top=None, wspace=0., hspace=0.)
+    fig.savefig(filename, bbox_inches='tight', pad=0.,
+                transparent=(alpha != 1.))
     plt.clf()
     plt.close('all')
 
@@ -41,32 +75,49 @@ def generate(model, image_data, epoch=0, out='./', filename='image'):
 
 
 def make_template_sentence(model):
+    """
     sentence = np.fliplr(1 - np.tri(model.n_word, model.n_word + 1).T)
     sentence = np.concatenate(
         [sentence, np.fliplr(1 - np.tri(model.n_word, model.n_word))], axis=0)
     sentence = [model.xp.array(word, np.int32)
                 for word in sentence.T.tolist()]
+    """
+    """ GrayCode
+    from sympy.combinatorics.graycode import GrayCode
+    sentence = [model.xp.array(cs, np.int32) for cs in zip(
+        *[[int(c) for c in s] for s in GrayCode(model.n_word).generate_gray()])]
+    """
+    sentence = [model.xp.array(cs, np.int32) for cs in zip(
+        *itertools.product(range(model.n_vocab), repeat=model.n_word))]
     return sentence
 
 
-def generate_by_template(model, epoch=0, out='./',
-                         filename='mimage', agent_type='sender'):
-
+def generate_by_template(model, epoch=0, out='./', filename='mimage'):
     sentence = make_template_sentence(model)
-
-    if agent_type == 'sender':
-        canvas = model.generate_from_sentence(sentence)
-        save_images(canvas, out + filename + '_{}e.png'.format(epoch))
-    elif agent_type == 'receiver':
-        canvas = model.infer_from_sentence(sentence)
-        save_images(canvas, out + filename + '_{}e.png'.format(epoch))
-    elif agent_type == 'both':
-        canvas = model.generate_from_sentence(sentence)
-        save_images(canvas, out + filename + '_{}e_s.png'.format(epoch))
-        canvas = model.infer_from_sentence(sentence)
-        save_images(canvas, out + filename + '_{}e_r.png'.format(epoch))
+    if model.n_vocab == 2:
+        width = int((2 ** model.n_word) ** 0.5)
+        shape = (width, width)
     else:
-        print('Invalid type.')
+        shape = None
+
+    canvas = model.generate_from_sentence(sentence)
+    save_images(canvas, out + filename + '_{}e_r.png'.format(epoch),
+                # shape=shape, color='Gray', alpha=0.95,
+                # interpolation='nearest', cutoff=0.25)
+                shape=shape, color='Gray', alpha=0.9, interpolation='nearest')
+    # shape=shape, color='Gray', alpha=0.95, cutoff='mean')
+    canvas = model.infer_from_sentence(sentence)
+    save_images(canvas, out + filename + '_{}e_s.png'.format(epoch),
+                # shape=shape, color='red', alpha=0.6, interpolation='nearest',
+                # cutoff=0.25)
+                shape=shape, color='red', alpha=0.6, interpolation='nearest')
+    # shape=shape, color='red', alpha=0.6, cutoff='mean')
+
+    layer1 = Image.open(out + filename + '_{}e_r.png'.format(epoch))
+    layer2 = Image.open(out + filename + '_{}e_s.png'.format(epoch))
+    result = Image.alpha_composite(layer1, layer2)
+    ImageDraw.Draw(result).text((10, 10), str(epoch), fill=(0, 0, 0, 128))
+    result.save(out + filename + 'xxx_{}e_rs.png'.format(epoch))
 
 
 def evaluate(model, dataset, batchsize, gpu):
@@ -134,7 +185,15 @@ def main():
         accum_loss_data = 0.
         accum_rein_loss_data = 0.
         train_iter.is_new_epoch = False
+        i_iter = 0
         while not train_iter.is_new_epoch:
+            i_iter += 1
+            if i_iter % (n_iters // 4 + 1) == 0:
+                i_epoch_mid = i_epoch - 1 + \
+                    (i_iter // (n_iters // 4 + 1)) * 0.1
+                generate_by_template(
+                    model, epoch=i_epoch_mid, out=args.out, filename='lang')
+
             batch = chainer.Variable(
                 convert(train_iter.next(), device=args.gpu), volatile='auto')
             loss, rein_loss = model(batch)
@@ -170,8 +229,7 @@ def main():
             valid_loss = '{:.6f}'.format(float(mean_valid_loss_data))
 
         generate_by_template(
-            model, epoch=i_epoch, out=args.out,
-            filename='lang', agent_type='both')
+            model, epoch=i_epoch + 0.0, out=args.out, filename='lang')
 
         print('Epoch', i_epoch,
               '\ttrain: {}\tvalid: {}'.format(train_loss, valid_loss))
