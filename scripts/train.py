@@ -13,7 +13,6 @@ import chainer
 import chainer.serializers as S
 from chainer.dataset.convert import concat_examples as convert
 
-# from links import communicator
 from links import coms
 
 import numpy as np
@@ -101,23 +100,17 @@ def generate_by_template(model, epoch=0, out='./', filename='mimage'):
         shape = None
 
     canvas = model.generate_from_sentence(sentence)
-    save_images(canvas, out + filename + '_{}e_r.png'.format(epoch),
-                # shape=shape, color='Gray', alpha=0.95,
-                # interpolation='nearest', cutoff=0.25)
+    save_images(canvas, out + filename + '_{:.2f}e_r.png'.format(epoch),
                 shape=shape, color='Gray', alpha=0.9, interpolation='nearest')
-    # shape=shape, color='Gray', alpha=0.95, cutoff='mean')
     canvas = model.infer_from_sentence(sentence)
-    save_images(canvas, out + filename + '_{}e_s.png'.format(epoch),
-                # shape=shape, color='red', alpha=0.6, interpolation='nearest',
-                # cutoff=0.25)
+    save_images(canvas, out + filename + '_{:.2f}e_s.png'.format(epoch),
                 shape=shape, color='red', alpha=0.6, interpolation='nearest')
-    # shape=shape, color='red', alpha=0.6, cutoff='mean')
 
-    layer1 = Image.open(out + filename + '_{}e_r.png'.format(epoch))
-    layer2 = Image.open(out + filename + '_{}e_s.png'.format(epoch))
+    layer1 = Image.open(out + filename + '_{:.2f}e_r.png'.format(epoch))
+    layer2 = Image.open(out + filename + '_{:.2f}e_s.png'.format(epoch))
     result = Image.alpha_composite(layer1, layer2)
     ImageDraw.Draw(result).text((10, 10), str(epoch), fill=(0, 0, 0, 128))
-    result.save(out + filename + 'xxx_{}e_rs.png'.format(epoch))
+    result.save(out + filename + 'xxx_{:.2f}e_rs.png'.format(epoch))
 
 
 def evaluate(model, dataset, batchsize, gpu):
@@ -141,6 +134,8 @@ def main():
     parser.add_argument('--image-unit', '-i', type=int, default=256)
     parser.add_argument('--vocab', '-v', type=int, default=2)
     parser.add_argument('--word', '-w', type=int, default=8)
+
+    parser.add_argument('--visualize', type=int, default=0)
 
     parser.add_argument('--gpu', '-g', type=int, default=-1,
                         help='GPU ID (negative value indicates CPU)')
@@ -169,12 +164,9 @@ def main():
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu()
-    optimizer = chainer.optimizers.Adam()
+    optimizer = chainer.optimizers.Adam(alpha=0.0005)
     optimizer.setup(model)
     optimizer.add_hook(chainer.optimizer.GradientClipping(1.))
-    # optimizer.add_hook(chainer.optimizer.WeightDecay(0.00001))
-    # optimizer.add_hook(chainer.optimizer.WeightDecay(0.001))
-    # optimizer.add_hook(chainer.optimizer.WeightDecay(0.0001))
     model.learn_constraint(train)
 
     n_iters = len(train) // args.batchsize
@@ -188,9 +180,9 @@ def main():
         i_iter = 0
         while not train_iter.is_new_epoch:
             i_iter += 1
-            if i_iter % (n_iters // 4 + 1) == 0:
+            if args.visualize and i_iter % args.visualize == 0:
                 i_epoch_mid = i_epoch - 1 + \
-                    (i_iter // (n_iters // 4 + 1)) * 0.1
+                    (i_iter * 1. / n_iters)
                 generate_by_template(
                     model, epoch=i_epoch_mid, out=args.out, filename='lang')
 
