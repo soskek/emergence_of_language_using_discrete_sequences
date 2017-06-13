@@ -15,8 +15,9 @@ Images of (1) can be built easily.
 It is difficult to get images of (2).
 So, I build it by backpropagation-based image generation, like DeepDream.
 
-An emergence of a language of vocabulary size 2 (binary) and fixed sequence length 8 is shown in
-[this video](https://github.com/soskek/interactive_ae/blob/master/emergence_process.mp4).
+An emergence of a language of vocabulary size 2 (binary) and fixed sequence length 8 is as below:
+
+![An emergence of a language on MNIST world.](https://github.com/soskek/interactive_ae/blob/master/emergence_process.gif).
 
 This shows listener's image (1) in grey and speaker's image (2) in red.
 Even if the listener's language (inducing grey images) is changed,
