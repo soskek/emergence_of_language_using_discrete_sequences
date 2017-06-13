@@ -19,6 +19,8 @@ An emergence of a language of vocabulary size 2 (binary) and fixed sequence leng
 
 ![An emergence of a language on MNIST world.](https://github.com/soskek/interactive_ae/blob/master/emergence_process.gif).
 
+(Sorry for this heavy video.)
+
 This shows listener's image (1) in grey and speaker's image (2) in red.
 Even if the listener's language (inducing grey images) is changed,
 the speaker's language interpretation (inducing red images) obeys it, and vice versa.
